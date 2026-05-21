@@ -320,7 +320,6 @@ p {
 
 .premium-product,
 .checkout-card,
-.tracking-card,
 .history-grid article,
 .account-card,
 .reward-card {
@@ -540,55 +539,6 @@ p {
   display: flex;
   gap: 10px;
   margin: 10px 0 16px;
-}
-
-.tracking-card {
-  display: grid;
-  gap: 18px;
-  padding: 18px;
-}
-
-.tracking-map {
-  align-items: center;
-  background:
-    linear-gradient(135deg, rgba(86, 166, 255, 0.25), transparent),
-    rgba(255, 255, 255, 0.06);
-  border-radius: 20px;
-  display: grid;
-  min-height: 170px;
-  place-items: center;
-  text-align: center;
-}
-
-.tracking-map span {
-  animation: pulse 1.4s ease-in-out infinite;
-  background: var(--green);
-  border-radius: 999px;
-  display: block;
-  height: 18px;
-  margin-bottom: 10px;
-  width: 18px;
-}
-
-.tracking-steps {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-.tracking-steps span {
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 900;
-  padding: 10px 6px;
-  text-align: center;
-}
-
-.tracking-steps span.active {
-  background: rgba(54, 197, 138, 0.18);
-  color: var(--green);
 }
 
 .history-grid,

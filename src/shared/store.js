@@ -3,7 +3,7 @@ import { categories, deliveryZones, demoCustomers, demoOrders, products, promoti
 const defaults = {
   categories,
   products,
-  orders: demoOrders,
+  orders: [],
   customers: demoCustomers,
   deliveryZones,
   promotions,
@@ -34,6 +34,11 @@ export function ensureSeedData() {
   Object.entries(defaults).forEach(([name, value]) => {
     if (!localStorage.getItem(key(name))) write(name, structuredClone(value));
   });
+  const currentOrders = read("orders");
+  const demoOrderIds = new Set(demoOrders.map((order) => order.id));
+  if (currentOrders.length && currentOrders.every((order) => demoOrderIds.has(order.id))) {
+    write("orders", []);
+  }
 }
 
 export function money(value) {

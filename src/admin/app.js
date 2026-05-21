@@ -15,6 +15,7 @@ const state = {
 
 const orderStatuses = ["Received", "Accepted", "Preparing", "Ready", "Completed", "Rejected", "Cancelled"];
 const nav = ["overview", "orders", "menu", "categories", "delivery", "customers", "promotions", "analytics", "settings"];
+const mvpViews = new Set(["overview", "orders"]);
 
 function orders() {
   return read("orders");
@@ -48,7 +49,7 @@ function renderLogin() {
         <h1>Restaurant dashboard login</h1>
         <label class="field">Email<input type="email" name="email" value="owner@girosking.com" required /></label>
         <label class="field">Password<input type="password" name="password" value="king123" required /></label>
-        <button class="text-button" type="button" data-admin-action="forgot-password">Forgot password</button>
+        <p class="form-message">Forgot password will be connected with real auth in the next backend step.</p>
         <button class="primary-action full" type="submit">Sign in</button>
         <p class="form-message" id="loginMessage"></p>
       </form>
@@ -63,7 +64,7 @@ function renderDashboard() {
         <a class="brand" href="/"><span class="brand-mark">GK</span><span><strong>Giros King</strong><small>Owner console</small></span></a>
         <button class="sidebar-toggle" data-admin-action="toggle-sidebar">Collapse</button>
         <nav>
-          ${nav.map((item) => `<button class="${state.view === item ? "active" : ""}" data-admin-view="${item}">${label(item)}</button>`).join("")}
+          ${nav.map((item) => `<button class="${state.view === item ? "active" : ""}" data-admin-view="${item}" ${mvpViews.has(item) ? "" : "disabled"}>${label(item)}</button>`).join("")}
         </nav>
         <button class="secondary-action full" data-admin-action="logout">Log out</button>
       </aside>
@@ -145,7 +146,7 @@ function renderOrders() {
         <article><span>Average ticket</span><strong>${money(stats.average)}</strong></article>
       </div>
       <section class="admin-panel span-2">
-        <div class="panel-heading"><div><span>Live incoming orders</span><h2>Kitchen queue</h2></div><button class="primary-action" data-admin-action="demo-order">Add order</button></div>
+        <div class="panel-heading"><div><span>Live incoming orders</span><h2>Kitchen queue</h2></div></div>
         <div class="admin-toolbar">
           <input type="search" placeholder="Search orders" value="${state.orderQuery}" data-order-search />
           <select data-order-filter><option value="all">All statuses</option>${orderStatuses.map((status) => `<option ${state.orderFilter === status ? "selected" : ""}>${status}</option>`).join("")}</select>
@@ -168,10 +169,9 @@ function renderOrderCard(order) {
     <article class="admin-order-card">
       <strong>${order.id}</strong>
       <span>${order.customer} · ${order.phone || "No phone"} · ${order.fulfillment}</span>
-      <p>${order.items}</p>
+      <p>${renderOrderItems(order)}</p>
       <small>${order.zone} · ${order.address || "Pickup"} · ${order.createdAt} · ${money(order.total)}</small>
       <small>${order.notes ? `Note: ${order.notes}` : "No customer notes"} · ${order.paymentMethod || "Card"}</small>
-      <label>Prep time<select data-prep-time="${order.id}"><option>10 min</option><option selected>18 min</option><option>25 min</option><option>35 min</option></select></label>
       <select data-order-status="${order.id}">
         ${orderStatuses.map((status) => `<option ${status === order.status ? "selected" : ""}>${status}</option>`).join("")}
       </select>
@@ -186,6 +186,13 @@ function renderOrderCard(order) {
       <details><summary>Email history</summary>${(order.emailLogs || []).map((log) => `<small>${log.type} · ${log.status} · ${log.sentAt || ""}</small>`).join("") || "<small>No email logs yet</small>"}</details>
     </article>
   `;
+}
+
+function renderOrderItems(order) {
+  if (Array.isArray(order.orderItems) && order.orderItems.length) {
+    return order.orderItems.map((item) => `${item.quantity}x ${item.name}${item.options ? ` (${item.options})` : ""}`).join(", ");
+  }
+  return order.items || "No items";
 }
 
 function renderMenu() {
@@ -342,9 +349,9 @@ function renderSettings() {
         <span>Payment settings</span><h2>Payments</h2>
         <p class="empty-admin">Stripe-ready structure for provider credentials, payout schedule, terminal mapping, and tax settings.</p>
         <div class="settings-stack row">
-          <label class="toggle-control"><input type="checkbox" checked /><span></span> Cash</label>
-          <label class="toggle-control"><input type="checkbox" checked /><span></span> Card</label>
-          <label class="toggle-control"><input type="checkbox" checked /><span></span> Online</label>
+          <label class="toggle-control"><input type="checkbox" checked disabled /><span></span> Cash</label>
+          <label class="toggle-control"><input type="checkbox" checked disabled /><span></span> Card</label>
+          <label class="toggle-control"><input type="checkbox" checked disabled /><span></span> Online</label>
         </div>
       </section>
       <section class="admin-panel span-2">
@@ -354,7 +361,7 @@ function renderSettings() {
           <label class="toggle-control"><input type="checkbox" ${settings.customerEmailNotifications ? "checked" : ""} data-setting="customerEmailNotifications" /><span></span> Customer emails</label>
           <label class="toggle-control"><input type="checkbox" ${state.soundEnabled ? "checked" : ""} data-sound /><span></span> New order sound</label>
           <label class="toggle-control"><input type="checkbox" ${settings.browserNotifications ? "checked" : ""} data-setting="browserNotifications" /><span></span> Browser notifications</label>
-          <label class="toggle-control"><input type="checkbox" checked /><span></span> Daily report email</label>
+          <label class="toggle-control"><input type="checkbox" checked disabled /><span></span> Daily report email</label>
         </div>
       </section>
       <section class="admin-panel span-2">
@@ -441,7 +448,7 @@ app.addEventListener("submit", (event) => {
 app.addEventListener("click", (event) => {
   const view = event.target.closest("[data-admin-view]")?.dataset.adminView;
   const action = event.target.closest("[data-admin-action]")?.dataset.adminAction;
-  if (view) {
+  if (view && mvpViews.has(view)) {
     state.view = view;
     render();
   }
@@ -450,17 +457,8 @@ app.addEventListener("click", (event) => {
     sessionStorage.removeItem("girosking:admin");
     render();
   }
-  if (action === "forgot-password") {
-    document.querySelector("#loginMessage").textContent = "Password reset flow is ready for Supabase Auth.";
-  }
   if (action === "toggle-sidebar") {
     state.sidebarCollapsed = !state.sidebarCollapsed;
-    render();
-  }
-  if (action === "demo-order") {
-    write("orders", [{ id: `GK-${Math.floor(1400 + Math.random() * 400)}`, customer: "New guest", email: "guest@example.com", phone: "(555) 014-0000", status: "Received", fulfillment: "Delivery", zone: "Central", total: 24.9, items: "2x Classic King Gyros", createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }, ...orders()]);
-    playOrderSound();
-    if ("Notification" in window && Notification.permission === "granted") new Notification("New Giros King order", { body: "A new order arrived." });
     render();
   }
   if (action === "add-product") {
@@ -554,6 +552,14 @@ app.addEventListener("change", (event) => {
 getSupabaseStatus().then((status) => {
   state.dbStatus = status.mode;
   render();
+});
+
+window.addEventListener("storage", (event) => {
+  if (event.key === "girosking:orders") render();
+});
+
+window.addEventListener("giros:data", (event) => {
+  if (event.detail?.name === "orders") render();
 });
 
 render();

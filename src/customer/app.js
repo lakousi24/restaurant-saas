@@ -76,7 +76,7 @@ function render() {
           <span><strong>Giros King</strong><small>Premium Greek delivery</small></span>
         </a>
         <nav class="premium-nav ${state.menuOpen ? "open" : ""}">
-          ${["home", "menu", "cart", "confirmation", "account"].map((id) => `<a class="${activeNav(id)}" href="#${id}" data-nav="${id}">${label(id)}</a>`).join("")}
+          ${["home", "menu", "cart", "confirmation"].map((id) => `<a class="${activeNav(id)}" href="#${id}" data-nav="${id}">${label(id)}</a>`).join("")}
         </nav>
         <button class="cart-icon" data-scroll-cart aria-label="Open cart">🛒<span>${cartCount()}</span></button>
         <button class="hamburger ${state.menuOpen ? "open" : ""}" data-action="menu" aria-label="Open menu"><span></span><span></span><span></span></button>
@@ -89,7 +89,6 @@ function render() {
         ${renderMenu()}
         ${renderCartCheckout()}
         ${renderConfirmation()}
-        ${renderAccount()}
       </main>
 
       <button class="mobile-cart-fab" data-scroll-cart>Cart · ${cartCount()} · ${money(total())}</button>
@@ -222,14 +221,14 @@ function renderCartCheckout() {
 
       <form class="checkout-card" id="checkoutForm" novalidate>
         <div class="section-title compact"><div><span>Checkout</span><h2>Fast checkout</h2></div></div>
-        <div class="wallet-row"><button type="button"> Pay</button><button type="button">G Pay</button></div>
+        <div class="wallet-row"><button type="button" disabled> Pay coming soon</button><button type="button" disabled>G Pay coming soon</button></div>
         <label class="field">Name<input name="name" value="${state.user?.name || ""}" placeholder="Alex Morgan" required />${error("name")}</label>
         <label class="field">Email<input name="email" type="email" value="${state.user?.email || ""}" placeholder="alex@example.com" required />${error("email")}</label>
         <label class="field">Phone<input name="phone" value="${state.user?.phone || ""}" placeholder="(555) 014-2040" required />${error("phone")}</label>
         <label class="field">Address<input name="address" placeholder="Delivery address or pickup note" ${state.fulfillment === "delivery" ? "required" : ""} />${error("address")}</label>
         <div class="stripe-card"><span>Card</span><b>4242 4242 4242 4242</b><small>MM/YY · CVC · ZIP</small></div>
         <label class="field">Notes<textarea name="notes" placeholder="Extra tzatziki, no onions..."></textarea></label>
-        <label class="notify-line"><input type="checkbox" checked /> Email me order updates</label>
+        <label class="notify-line"><input type="checkbox" checked disabled /> Email updates enabled</label>
         <button class="primary-action full" type="submit" ${cart().length && validMinimum && !state.submitting ? "" : "disabled"}>${state.submitting ? "Sending order..." : `Place order · ${money(total())}`}</button>
       </form>
     </section>
@@ -271,20 +270,6 @@ function renderConfirmation() {
       <div class="history-grid">
         ${history.length ? history.map((order) => `<article><span>${order.id}</span><strong>${order.items}</strong><small>${order.status} · ${money(order.total)}</small></article>`).join("") : `<div class="empty-state dark">Order history appears here after checkout.</div>`}
       </div>
-    </section>
-  `;
-}
-
-function renderAccount() {
-  const points = Number(read("points") || 0);
-  return `
-    <section class="premium-section account-grid" id="account">
-      <article class="reward-card" id="rewards">
-        <span>Rewards</span><h2>${points} points</h2><p>Redeem ${read("settings").loyalty.redemptionPoints} points for ${money(read("settings").loyalty.rewardValue)} off.</p>
-        <div><span style="width:${Math.min(100, points / 5)}%"></span></div>
-      </article>
-      <article class="account-card"><span>Profile</span><h2>${state.user?.name || "Guest customer"}</h2><p>${state.user ? state.user.email : "Sign in to sync addresses, rewards, and order history."}</p><button class="secondary-action" data-action="auth">${state.user ? "Edit account" : "Login or sign up"}</button></article>
-      <article class="account-card"><span>Email notifications</span><h2>Automatic updates</h2><p>Customers receive received, accepted, and ready emails. Restaurant gets a new order email.</p></article>
     </section>
   `;
 }
@@ -352,7 +337,7 @@ function addItem(product, quantity = 1) {
     lineTotal: product.price,
     summary: "Classic build",
   };
-  write("cart", [...cart(), item]);
+  write("cart", [item, ...cart()]);
   showToast(`${product.name} added to cart`);
 }
 
@@ -365,14 +350,14 @@ function addCustomizedProduct() {
   const notes = sanitize(document.querySelector("[data-item-notes]")?.value);
   const quantity = Number(product.quantity || 1);
   const lineTotal = product.price + selectedSauce.price + selectedExtras.reduce((sum, extra) => sum + extra.price, 0);
-  write("cart", [...cart(), {
+  write("cart", [{
     cartId: uid("cart"),
     productId: product.id,
     name: product.name,
     quantity,
     lineTotal,
     summary: [option, selectedSauce.name, spice, ...selectedExtras.map((extra) => extra.name), notes].filter(Boolean).join(" · "),
-  }]);
+  }, ...cart()]);
   state.selectedProduct = null;
   showToast("Added to cart");
 }
@@ -407,7 +392,15 @@ async function placeOrder(form) {
     subtotal: subtotal(),
     deliveryFee: deliveryFee(),
     discount: discount(),
-    items: cart().map((item) => `${item.quantity}x ${item.name}`).join(", "),
+    items: cart().map((item) => `${item.quantity}x ${item.name}${item.summary ? ` (${item.summary})` : ""}`).join(", "),
+    orderItems: cart().map((item) => ({
+      productId: item.productId,
+      name: item.name,
+      quantity: item.quantity,
+      unitPrice: item.lineTotal,
+      lineTotal: item.lineTotal * item.quantity,
+      options: item.summary,
+    })),
     createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
   };
   let persistedOrder = order;
