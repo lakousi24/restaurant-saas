@@ -1,8 +1,11 @@
-import { categories, deliveryZones, demoCustomers, demoOrders, products, promotions, settings } from "./data.js";
+import { categories, deliveryZones, demoCustomers, demoOrders, offerBanners, products, promotions, settings, upsellProducts } from "./data.js";
 
 const defaults = {
+  schemaVersion: 4,
   categories,
   products,
+  offerBanners,
+  upsellProducts,
   orders: [],
   customers: demoCustomers,
   deliveryZones,
@@ -17,6 +20,9 @@ const defaults = {
   fulfillmentChoice: "",
   deliveryAddress: "",
   pickupSchedule: null,
+  savedVouchers: [],
+  orderContext: null,
+  language: "en",
 };
 
 const key = (name) => `girosking:${name}`;
@@ -36,6 +42,11 @@ export function write(name, value) {
 }
 
 export function ensureSeedData() {
+  const version = read("schemaVersion");
+  if (version !== defaults.schemaVersion) {
+    ["categories", "products", "offerBanners", "upsellProducts", "deliveryZones", "promotions", "settings"].forEach((name) => write(name, structuredClone(defaults[name])));
+    write("schemaVersion", defaults.schemaVersion);
+  }
   Object.entries(defaults).forEach(([name, value]) => {
     if (!localStorage.getItem(key(name))) write(name, structuredClone(value));
   });

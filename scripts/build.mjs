@@ -10,6 +10,8 @@ const requiredFiles = [
   "api/orders/[id]/status.js",
   "src/customer/app.js",
   "src/admin/app.js",
+  "src/shared/order-service.js",
+  "src/shared/auth-service.js",
   "src/server/order-service.mjs",
 ];
 
@@ -45,6 +47,8 @@ await run(process.execPath, [
 await run(process.execPath, ["--check", "src/customer/app.js"]);
 await run(process.execPath, ["--check", "src/admin/app.js"]);
 await run(process.execPath, ["--check", "src/shared/store.js"]);
+await run(process.execPath, ["--check", "src/shared/order-service.js"]);
+await run(process.execPath, ["--check", "src/shared/auth-service.js"]);
 await run(process.execPath, ["--check", "src/server/order-service.mjs"]);
 await run(process.execPath, ["--check", "api/orders.js"]);
 await run(process.execPath, ["--check", "api/orders/[id]/status.js"]);

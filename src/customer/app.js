@@ -1,34 +1,50 @@
-import { extras, sauces } from "../shared/data.js";
 import { createOrder } from "../shared/api.js";
-import { activeProducts, money, read, uid, write } from "../shared/store.js";
+import { currentUser, saveDemoUser, validateAccount } from "../shared/auth-service.js";
+import { activeProducts, money, read, updateById, write } from "../shared/store.js";
+import { createOrderFromCart, newCartItem, pickupSlots, quoteDelivery, saveOrder, todayISO } from "../shared/order-service.js";
 import { getSupabaseStatus } from "../shared/supabase.js";
 import { email, required, sanitize, validateCheckout } from "../shared/validation.js";
 
 const app = document.querySelector("#customerApp");
-
-const copy = {
-  delivery: "Delivery",
-  pickup: "Pickup",
-  startTitle: "How would you like to order?",
-  confirmAddress: "Please confirm your delivery address",
-};
+const storeAddress = "Giros King, 24 Market Street";
+const paymentMethods = ["Cash", "PayPal", "Apple Pay", "Card", "Klarna"];
+const toppingOptions = [
+  { id: "mozzarella", name: "Mozzarella", price: 0, included: true },
+  { id: "tomato", name: "Tomato", price: 0, included: true },
+  { id: "onion", name: "Red onion", price: 0, included: true },
+  { id: "mushrooms", name: "Mushrooms", price: 1.2 },
+  { id: "jalapeno", name: "Jalapeno", price: 1.0 },
+  { id: "chicken", name: "Chicken", price: 2.5 },
+];
 
 const state = {
-  category: "featured",
+  page: "menu",
+  category: "pizza",
   query: "",
-  fulfillment: read("fulfillmentChoice") || "",
+  bannerIndex: 0,
   selectedProduct: null,
-  authOpen: false,
-  authMode: "signup",
-  locationPrompt: read("cookieConsent") && !read("locationPreference"),
-  addressConfirmOpen: false,
-  pendingForm: null,
-  user: read("session"),
-  lastConfirmation: read("lastOrder"),
-  submitting: false,
-  toast: "",
-  formErrors: {},
+  productConfig: null,
+  upsellOpen: false,
+  selectedUpsells: new Set(),
+  sheet: !read("cookieDecision") ? "cookies" : read("locationPreference") ? null : "location",
+  startMode: "",
+  authMode: "guest",
   accountErrors: {},
+  checkoutErrors: {},
+  minOrderOpen: false,
+  addressConfirmOpen: false,
+  pendingCheckout: null,
+  toast: "",
+  user: currentUser(),
+  orderContext: read("orderContext"),
+  voucherCode: "",
+  appliedVoucher: read("appliedVoucher"),
+  language: read("language") || "en",
+};
+
+const t = {
+  en: { start: "Start Your Order", delivery: "Delivery", pickup: "Pickup", rewards: "Rewards Club", account: "Account", language: "Language" },
+  de: { start: "Bestellung starten", delivery: "Lieferung", pickup: "Abholung", rewards: "Rewards Club", account: "Konto", language: "Sprache" },
 };
 
 function cart() {
@@ -39,426 +55,490 @@ function settings() {
   return read("settings");
 }
 
-function customerAddress() {
-  return read("deliveryAddress") || "";
+function categories() {
+  return read("categories").filter((category) => category.visible !== false);
 }
 
-function pickupSchedule() {
-  return read("pickupSchedule") || { day: todayISO(), time: "18:00" };
-}
-
-function cartCount() {
-  return cart().reduce((sum, item) => sum + item.quantity, 0);
+function context() {
+  return state.orderContext || read("orderContext");
 }
 
 function subtotal() {
-  return cart().reduce((sum, item) => sum + item.lineTotal * item.quantity, 0);
+  return cart().reduce((sum, item) => sum + Number(item.lineTotal || 0) * Number(item.quantity || 1), 0);
 }
 
-function deliveryQuote(address = customerAddress()) {
-  if (state.fulfillment !== "delivery") return { fee: 0, eta: "15-20 min", area: "Pickup" };
-  const normalized = address.toLowerCase();
-  const postcode = normalized.match(/\b\d{5}\b/)?.[0] || "";
-  const zones = read("deliveryZones");
-  let zone = zones[0];
-  if (normalized.includes("midtown") || postcode.startsWith("10")) zone = zones[1] || zone;
-  if (normalized.includes("outer") || normalized.includes("ring") || postcode.startsWith("11")) zone = zones[2] || zone;
-  const fee = subtotal() >= settings().freeDeliveryThreshold ? 0 : Number(zone.fee || 0);
-  return { fee, eta: zone.eta, area: zone.name };
+function delivery() {
+  const ctx = context();
+  return ctx?.type === "delivery" ? quoteDelivery(ctx.address, subtotal()) : { available: true, fee: 0, area: "Pickup", eta: "" };
 }
 
 function discount() {
-  return 0;
+  const voucher = state.appliedVoucher;
+  if (!voucher) return 0;
+  if (subtotal() < Number(voucher.minimumOrder || 0)) return 0;
+  return voucher.type === "percent" ? subtotal() * (Number(voucher.value || 0) / 100) : Math.min(subtotal(), Number(voucher.value || 0));
 }
 
 function total() {
-  return Math.max(0, subtotal() + deliveryQuote().fee - discount());
+  return Math.max(0, subtotal() + delivery().fee - discount());
 }
 
-function todayISO(offset = 0) {
-  const date = new Date();
-  date.setDate(date.getDate() + offset);
-  return date.toISOString().slice(0, 10);
+function cartCount() {
+  return cart().reduce((sum, item) => sum + Number(item.quantity || 1), 0);
 }
 
-function visibleProducts() {
+function products() {
   return activeProducts().filter((product) => {
-    const categoryMatch = state.category === "featured" ? product.featured : product.category === state.category;
+    const categoryMatch = state.category === "offers" ? product.category === "offers" || product.featured : product.category === state.category;
     const queryMatch = `${product.name} ${product.description}`.toLowerCase().includes(state.query.toLowerCase());
     return categoryMatch && queryMatch;
   });
 }
 
-function productBadge(product) {
-  if (product.bestseller || product.featured) return "Popular";
-  if (product.spicy || product.description.toLowerCase().includes("spicy")) return "Spicy";
-  if (product.vegetarian) return "Vegetarian";
-  return "";
-}
-
 function render() {
   app.innerHTML = `
-    <div class="customer-shell delivery-theme">
+    <div class="customer-shell dominos-inspired">
       ${renderTopbar()}
-      <main>
-        ${renderHero()}
-        ${!state.fulfillment ? renderStartScreen() : renderOrderingFlow()}
+      <main class="${context() ? "" : "menu-blurred"}">
+        ${renderPage()}
       </main>
-      ${cart().length ? `<button class="mobile-cart-fab" data-scroll-cart>Cart (${cartCount()}) · ${money(total())}</button>` : ""}
-      ${state.selectedProduct ? renderProductModal() : ""}
-      ${state.authOpen ? renderAuthModal() : ""}
-      ${state.addressConfirmOpen ? renderAddressConfirmation() : ""}
-      ${!read("cookieConsent") ? renderCookieConsent() : ""}
-      ${state.locationPrompt ? renderLocationPrompt() : ""}
+      ${renderBottomNav()}
+      ${renderSheets()}
       <div class="toast-host">${state.toast ? `<div class="toast">${state.toast}</div>` : ""}</div>
     </div>
   `;
 }
 
 function renderTopbar() {
+  const ctx = context();
   return `
-    <header class="customer-topbar">
-      <a class="brand premium-brand" href="#home">
-        <span class="brand-mark">GK</span>
-        <span><strong>Giros King</strong><small>Order online</small></span>
-      </a>
-      ${state.fulfillment ? `<nav class="premium-nav">
-          <a href="#menu">Menu</a>
-          <a href="#cart">Cart</a>
-          <a href="#confirmation">Orders</a>
-        </nav>` : ""}
-      ${state.fulfillment ? `<button class="cart-icon" data-scroll-cart aria-label="Open cart">Cart<span>${cartCount()}</span></button>` : ""}
-      <button class="user-chip account-button" data-action="auth">${state.user ? state.user.name : "Account"}</button>
+    <header class="app-topbar">
+      <button class="icon-button" data-action="start-over" aria-label="Back">Back</button>
+      <div class="order-context">
+        <strong>${ctx ? `${ctx.type === "delivery" ? "Delivery" : "Pickup"} ${ctx.time} ${ctx.date}` : "Giros King"}</strong>
+        <span>${ctx ? (ctx.type === "delivery" ? ctx.address : storeAddress) : "Start your order"}</span>
+      </div>
+      <button class="icon-button account-fab" data-page="account" aria-label="Account">Account</button>
     </header>
   `;
 }
 
-function renderHero() {
-  return `
-    <section class="customer-hero compact-hero" id="home">
-      <div class="hero-copy">
-        <span class="live-badge">Open today · ${state.fulfillment === "pickup" ? "Pickup available" : "Delivery available"}</span>
-        <h1>Fresh Greek food, ordered in a few taps.</h1>
-        <p>Choose delivery or pickup, customize your meal, confirm your address, and get an automatic order confirmation.</p>
-        <div class="hero-search">
-          <input type="search" placeholder="Search gyros, bowls, fries..." value="${state.query}" data-search />
-          <button class="primary-action" data-scroll-menu ${state.fulfillment ? "" : "disabled"}>Browse menu</button>
-        </div>
-      </div>
-      <img src="assets/giros-hero.png" alt="Fresh Giros King wrap" />
-    </section>
-  `;
+function renderPage() {
+  if (!context()) return renderMenuBackground();
+  if (state.page === "cart") return renderCartPage();
+  if (state.page === "offers") return renderOffersPage();
+  if (state.page === "more") return renderMorePage();
+  if (state.page === "account") return renderAccountPage();
+  return renderMenuPage();
 }
 
-function renderStartScreen() {
-  const schedule = pickupSchedule();
-  return `
-    <section class="start-panel">
-      <span class="live-badge">Start order</span>
-      <h2>${copy.startTitle}</h2>
-      <div class="choice-cards">
-        <button data-start-mode="delivery">
-          <strong>${copy.delivery}</strong>
-          <span>Enter your address and we calculate the delivery fee automatically.</span>
-        </button>
-        <button data-start-mode="pickup">
-          <strong>${copy.pickup}</strong>
-          <span>Choose a pickup day and time before checkout.</span>
-        </button>
-      </div>
-      <div class="start-details" data-start-details></div>
-      <template data-delivery-template>
-        <form id="deliveryStartForm" class="start-form">
-          <label class="field">Delivery address<input name="address" placeholder="Street, city, postcode" value="${customerAddress()}" required /></label>
-          <button class="primary-action full" type="submit">Continue to menu</button>
-        </form>
-      </template>
-      <template data-pickup-template>
-        <form id="pickupStartForm" class="start-form">
-          <label class="field">Pickup day<select name="day">
-            <option value="${todayISO()}" ${schedule.day === todayISO() ? "selected" : ""}>Today</option>
-            <option value="${todayISO(1)}" ${schedule.day === todayISO(1) ? "selected" : ""}>Tomorrow</option>
-            <option value="${todayISO(2)}" ${schedule.day === todayISO(2) ? "selected" : ""}>In two days</option>
-          </select></label>
-          <label class="field">Pickup time<select name="time">
-            ${["17:30", "18:00", "18:30", "19:00", "19:30", "20:00"].map((time) => `<option value="${time}" ${schedule.time === time ? "selected" : ""}>${time}</option>`).join("")}
-          </select></label>
-          <button class="primary-action full" type="submit">Continue to menu</button>
-        </form>
-      </template>
-    </section>
-  `;
+function renderMenuBackground() {
+  return `<section class="menu-preview">${renderMenuPage()}</section>`;
 }
 
-function renderOrderingFlow() {
+function renderMenuPage() {
   return `
-    ${renderFulfillmentSummary()}
-    ${renderMenu()}
-    ${renderCartCheckout()}
-    ${renderConfirmation()}
-  `;
-}
-
-function renderFulfillmentSummary() {
-  const quote = deliveryQuote();
-  const schedule = pickupSchedule();
-  return `
-    <section class="order-summary-strip">
-      <div>
-        <span>${state.fulfillment === "delivery" ? "Delivering to" : "Pickup time"}</span>
-        <strong>${state.fulfillment === "delivery" ? customerAddress() : `${schedule.day} at ${schedule.time}`}</strong>
+    <section class="menu-page">
+      <div class="search-shell">
+        <input type="search" placeholder="Search pizza, pasta, drinks..." value="${state.query}" data-search />
       </div>
-      <div>
-        <span>${state.fulfillment === "delivery" ? "Delivery fee" : "Pickup fee"}</span>
-        <strong>${state.fulfillment === "delivery" ? `${money(quote.fee)} · ${quote.eta}` : money(0)}</strong>
-      </div>
-      <button class="secondary-action" data-action="change-start">Change</button>
-    </section>
-  `;
-}
-
-function renderMenu() {
-  const categories = read("categories").filter((category) => category.visible !== false);
-  return `
-    <section class="premium-section menu-surface" id="menu">
-      <div class="section-title">
-        <div><span>Menu</span><h2>Choose your food</h2></div>
-      </div>
-      <div class="category-dock">
-        ${categories.map((category) => `<button class="${state.category === category.id ? "active" : ""}" data-category="${category.id}"><span>${category.icon}</span>${category.name}</button>`).join("")}
-      </div>
+      <nav class="category-tabs">
+        ${categories().map((category) => `<button class="${state.category === category.id ? "active" : ""}" data-category="${category.id}">${category.name}</button>`).join("")}
+      </nav>
+      ${renderPromoCarousel()}
       <div class="product-grid" data-product-grid>${renderProductGrid()}</div>
     </section>
   `;
 }
 
-function renderProductGrid() {
-  const items = visibleProducts();
-  return items.length ? items.map(renderProductCard).join("") : `<div class="empty-state dark">No dishes found. Try a different search.</div>`;
+function renderPromoCarousel() {
+  const banners = read("offerBanners");
+  return `
+    <section class="promo-carousel">
+      ${banners.map((banner, index) => `
+        <button class="promo-banner ${index === state.bannerIndex ? "active" : ""}" data-offer-product="${banner.productId}">
+          <span>${banner.badge}</span>
+          <strong>${banner.title}</strong>
+          <small>${banner.subtitle}</small>
+        </button>
+      `).join("")}
+      <div class="dots">${banners.map((_, index) => `<button class="${index === state.bannerIndex ? "active" : ""}" data-banner="${index}" aria-label="Show offer ${index + 1}"></button>`).join("")}</div>
+    </section>
+  `;
 }
 
-function updateProductGrid() {
-  const grid = app.querySelector("[data-product-grid]");
-  if (grid) grid.innerHTML = renderProductGrid();
+function renderProductGrid() {
+  const list = products();
+  return list.length ? list.map(renderProductCard).join("") : `<div class="empty-state clean">No products found.</div>`;
 }
 
 function renderProductCard(product) {
-  const badge = productBadge(product);
+  const label = product.category === "offers" ? "Lunch Deal" : product.bestseller ? "Popular" : product.vegetarian ? "Vegan option" : product.spicy ? "New" : "";
   return `
-    <article class="premium-product ${product.available ? "" : "is-sold-out"}">
-      <button class="product-media" data-product="${product.id}">
+    <article class="food-card">
+      <button class="food-image" data-product="${product.id}">
         <img src="${product.image}" alt="${product.name}" loading="lazy" />
-        ${badge ? `<b>${badge}</b>` : ""}
+        ${label ? `<span>${label}</span>` : ""}
       </button>
-      <div class="product-content">
-        <div><h3>${product.name}</h3><p>${product.description}</p></div>
-        <div class="product-meta"><span>${money(product.price)}</span><small>${product.prep} min</small></div>
-        <button class="add-premium" ${product.available ? `data-product="${product.id}"` : "disabled"}>${product.available ? "Customize" : "Sold out"}</button>
+      <div>
+        <h3>${product.name}</h3>
+        <p>${product.description}</p>
+        <strong>${money(product.price)}</strong>
       </div>
     </article>
   `;
 }
 
-function renderCartCheckout() {
-  const minimumRemaining = Math.max(0, settings().minimumOrder - subtotal());
-  const validMinimum = state.fulfillment === "pickup" || subtotal() >= settings().minimumOrder;
+function renderCartPage() {
+  const missing = Math.max(0, Number(settings().minimumOrder || 15) - subtotal());
+  const canCheckout = context()?.type === "pickup" || missing <= 0;
   return `
-    <section class="premium-section cart-checkout" id="cart">
-      <div class="checkout-card">
-        <div class="section-title compact">
-          <div><span>Cart</span><h2>Your order</h2></div>
-          ${cart().length ? `<button class="text-button" data-action="clear-cart">Clear</button>` : ""}
-        </div>
-        <div class="cart-lines">
-          ${cart().length ? cart().map((item) => `
-            <article>
-              <div><strong>${item.name}</strong><span>${item.summary}</span></div>
-              <div class="quantity-control"><button data-dec="${item.cartId}">-</button><b>${item.quantity}</b><button data-inc="${item.cartId}">+</button></div>
-              <strong>${money(item.lineTotal * item.quantity)}</strong>
-            </article>
-          `).join("") : renderEmptyCart()}
-        </div>
-        <div class="fee-note" data-fee-note>${renderFeeNoteContent()}</div>
-        ${!validMinimum ? `<div class="cart-warning">Add ${money(minimumRemaining)} more to reach the delivery minimum.</div>` : ""}
-        ${renderTotals()}
+    <section class="cart-page">
+      <h1>Cart</h1>
+      ${renderVoucherBox()}
+      <div class="cart-lines">
+        ${cart().length ? cart().map(renderCartItem).join("") : `<div class="empty-state clean">Your cart is empty.</div>`}
       </div>
-      <div class="checkout-card" id="checkout">
-        ${state.user ? renderCheckoutForm(validMinimum) : renderAccountGate()}
-      </div>
+      ${!canCheckout && cart().length ? `<div class="minimum-alert"><strong>Minimum order ${money(settings().minimumOrder)}</strong><span>Add ${money(missing)} more to continue.</span></div>` : ""}
+      ${renderSuggestedAddons()}
+      ${renderTotals()}
+      <button class="sticky-checkout" data-action="checkout" ${cart().length ? "" : "disabled"}>Checkout · ${money(total())}</button>
     </section>
   `;
 }
 
-function renderAccountGate() {
+function renderCartItem(item) {
   return `
-    <div class="section-title compact"><div><span>Account required</span><h2>Create an account to checkout</h2></div></div>
-    <p class="helper-copy">Save your contact details before placing an order. This is localStorage for now and ready to replace with Supabase Auth later.</p>
-    <button class="primary-action full" data-action="auth">Login or sign up</button>
+    <article class="cart-item">
+      <div>
+        <strong>${item.name}</strong>
+        <span>${[item.size, item.base, item.sauce, ...(item.toppings || []).map((topping) => topping.name), item.notes].filter(Boolean).join(" · ")}</span>
+      </div>
+      <div class="quantity-control"><button data-dec="${item.cartId}">-</button><b>${item.quantity}</b><button data-inc="${item.cartId}">+</button></div>
+      <strong>${money(item.lineTotal * item.quantity)}</strong>
+    </article>
   `;
 }
 
-function renderCheckoutForm(validMinimum) {
+function renderVoucherBox() {
+  const saved = read("savedVouchers");
   return `
-    <form id="checkoutForm" novalidate>
-      <div class="section-title compact"><div><span>Checkout</span><h2>Confirm details</h2></div></div>
-      <label class="field">Name<input name="name" value="${state.user.name || ""}" required />${error("name")}</label>
-      <label class="field">Email<input name="email" type="email" value="${state.user.email || ""}" required />${error("email")}</label>
-      <label class="field">Phone<input name="phone" value="${state.user.phone || ""}" required />${error("phone")}</label>
-      ${state.fulfillment === "delivery" ? `<label class="field">Address<input name="address" value="${customerAddress()}" required />${error("address")}</label>` : ""}
-      <div class="stripe-card disabled-payment"><span>Payment</span><b>Pay at restaurant for MVP</b><small>Online payments will be connected later.</small></div>
-      <label class="field">Notes<textarea name="notes" placeholder="No onions, sauce on the side..."></textarea></label>
-      <label class="notify-line"><input type="checkbox" checked disabled /> Automatic email confirmation enabled</label>
-      <button class="primary-action full" type="submit" ${cart().length && validMinimum && !state.submitting ? "" : "disabled"}>${state.submitting ? "Submitting..." : `Place order · ${money(total())}`}</button>
-    </form>
+    <section class="voucher-box">
+      <label>Voucher code<input value="${state.voucherCode}" placeholder="Enter voucher" data-voucher-input /></label>
+      <button class="secondary-action" data-action="apply-voucher">Apply voucher</button>
+      ${state.appliedVoucher ? `<p>${state.appliedVoucher.code} applied: -${money(discount())}</p>` : ""}
+      ${saved.length ? `<div class="saved-vouchers">${saved.map((voucher) => `<button data-saved-voucher="${voucher.id}">${voucher.code}</button>`).join("")}</div>` : ""}
+    </section>
   `;
 }
 
-function error(name) {
-  return state.formErrors[name] ? `<small class="field-error">${state.formErrors[name]}</small>` : "";
-}
-
-function renderEmptyCart() {
-  return `<div class="empty-state dark empty-cart"><strong>Your cart is empty</strong><span>Add a dish from the menu to start checkout.</span><button class="secondary-action" data-scroll-menu>Browse menu</button></div>`;
+function renderSuggestedAddons() {
+  return `
+    <section class="suggested-addons">
+      <h2>Suggested add ons</h2>
+      <div>${read("upsellProducts").map((item) => `<button data-add-upsell="${item.id}"><img src="${item.image}" alt="" /><span>${item.name}</span><strong>${money(item.price)}</strong></button>`).join("")}</div>
+    </section>
+  `;
 }
 
 function renderTotals() {
   return `
-    <div class="premium-totals" data-totals>
-      ${renderTotalsContent()}
-    </div>
-  `;
-}
-
-function renderFeeNoteContent() {
-  if (state.fulfillment === "delivery") {
-    const quote = deliveryQuote();
-    return `<span>Delivery fee</span><strong>${money(quote.fee)}</strong><small>Calculated from your address: ${quote.area}</small>`;
-  }
-  return `<span>Pickup</span><strong>No delivery fee</strong><small>${pickupSchedule().day} at ${pickupSchedule().time}</small>`;
-}
-
-function renderTotalsContent() {
-  return `
+    <section class="totals-card">
       <div><span>Subtotal</span><strong>${money(subtotal())}</strong></div>
-      <div><span>Delivery</span><strong>${money(deliveryQuote().fee)}</strong></div>
+      <div><span>Delivery fee</span><strong>${money(delivery().fee)}</strong></div>
+      <div><span>Discount</span><strong>-${money(discount())}</strong></div>
       <div class="grand"><span>Total</span><strong>${money(total())}</strong></div>
-  `;
-}
-
-function renderConfirmation() {
-  const lastOrder = state.lastConfirmation;
-  const history = read("orders").filter((order) => !state.user || order.email === state.user.email).slice(0, 4);
-  return `
-    <section class="premium-section" id="confirmation">
-      <div class="section-title"><div><span>Confirmation</span><h2>${lastOrder ? `Order ${lastOrder.id}` : "No order yet"}</h2></div></div>
-      <div class="confirmation-card ${lastOrder ? "success" : ""}">
-        <div class="success-check">OK</div>
-        <div>
-          <h3>${lastOrder ? "Order automatically confirmed" : "Orders appear here after checkout"}</h3>
-          <p>${lastOrder ? `Your order is confirmed. The restaurant can now mark it as preparing, ready, or completed.` : "Order status updates appear here after checkout."}</p>
-        </div>
-      </div>
-      <div class="history-grid">
-        ${history.length ? history.map((order) => `<article><span>${order.id}</span><strong>${order.items}</strong><small>${order.status} · ${money(order.total)}</small></article>`).join("") : `<div class="empty-state dark">Order history appears here after checkout.</div>`}
-      </div>
     </section>
   `;
 }
 
-function renderProductModal() {
-  const product = state.selectedProduct;
+function renderOffersPage() {
+  const promos = read("promotions").filter((promo) => promo.active);
   return `
-    <div class="modal-backdrop" data-close-modal>
-      <section class="product-modal" role="dialog" aria-modal="true" aria-label="${product.name}">
-        <button class="modal-close" data-close-modal>×</button>
-        <img src="${product.image}" alt="${product.name}" />
-        <div class="modal-body">
-          <span class="live-badge">${product.prep} min</span>
-          <h2>${product.name}</h2>
-          <p>${product.description}</p>
-          <div class="ingredients"><strong>Ingredients</strong><span>${product.ingredients || product.description}</span></div>
-          <div class="ingredients"><strong>Allergens</strong><span>${product.allergens || "Ask the restaurant for allergen details."}</span></div>
-          <label class="field">Base customization<select data-custom-option>${product.options.map((option) => `<option>${option}</option>`).join("")}</select></label>
-          <div class="choice-grid"><h3>Extras</h3>${extras.map((extra) => `<label><input type="checkbox" value="${extra.id}" data-extra /> ${extra.name} <span>${money(extra.price)}</span></label>`).join("")}</div>
-          <div class="choice-grid"><h3>Sauces</h3>${sauces.map((sauce) => `<label><input type="radio" name="sauce" value="${sauce.id}" ${sauce.id === "tzatziki" ? "checked" : ""} data-sauce /> ${sauce.name} <span>${sauce.price ? money(sauce.price) : "Free"}</span></label>`).join("")}</div>
-          <label class="field">Special instructions<textarea data-item-notes placeholder="No onions, sauce on the side..."></textarea></label>
-          <div class="modal-quantity"><button data-modal-dec>-</button><strong>${product.quantity || 1}</strong><button data-modal-inc>+</button></div>
-          <button class="primary-action full" data-action="add-customized">Add to cart · ${money(product.price * Number(product.quantity || 1))}</button>
-        </div>
-      </section>
-    </div>
+    <section class="offers-page">
+      <h1>Offers</h1>
+      ${renderVoucherBox()}
+      <h2>Available offers</h2>
+      <div class="offer-list">${promos.map((promo) => `<article><strong>${promo.code}</strong><span>${promo.label || "Voucher"}</span><small>Minimum ${money(promo.minimumOrder || 0)} · expires ${promo.expiresAt || "not set"}</small><button data-save-voucher="${promo.id}">Save voucher</button></article>`).join("")}</div>
+      <p class="helper-copy">Terms and conditions are available under More.</p>
+    </section>
   `;
 }
 
-function renderAuthModal() {
+function renderMorePage() {
   return `
-    <div class="modal-backdrop" data-close-auth>
-      <form class="auth-modal" id="authForm">
-        <button class="modal-close" type="button" data-close-auth>×</button>
-        <span class="live-badge">Account</span><h2>${state.authMode === "login" ? "Log in" : "Create account"}</h2>
-        <div class="auth-tabs">
-          <button type="button" class="${state.authMode === "signup" ? "active" : ""}" data-auth-mode="signup">Sign up</button>
-          <button type="button" class="${state.authMode === "login" ? "active" : ""}" data-auth-mode="login">Log in</button>
-        </div>
-        <button class="google-button" type="button" disabled>Continue with Google</button>
-        <small class="helper-copy">Google login is prepared but not connected yet.</small>
-        <label class="field">Name<input name="name" value="${state.user?.name || ""}" ${state.authMode === "signup" ? "required" : ""} />${accountError("name")}</label>
-        <label class="field">Email<input name="email" type="email" value="${state.user?.email || ""}" required />${accountError("email")}</label>
-        <label class="field">Phone<input name="phone" value="${state.user?.phone || ""}" ${state.authMode === "signup" ? "required" : ""} />${accountError("phone")}</label>
-        <button class="primary-action full" type="submit">${state.authMode === "login" ? "Log in" : "Create account"}</button>
-      </form>
-    </div>
+    <section class="more-page">
+      <h1>More</h1>
+      <button data-sheet="language">Language</button>
+      <button data-sheet="cookie-settings">Cookie Settings</button>
+      <article><strong>Terms & Conditions</strong><span>Prepared for legal content.</span></article>
+      <article><strong>Privacy Policy</strong><span>Prepared for legal content.</span></article>
+      <article><strong>Legal</strong><span>Giros King ordering MVP</span></article>
+      <article><strong>Order IDs</strong><span>${read("orders").slice(0, 3).map((order) => order.id).join(", ") || "No orders yet"}</span></article>
+      <article><strong>App version</strong><span>0.2 MVP</span></article>
+    </section>
   `;
+}
+
+function renderAccountPage() {
+  return `
+    <section class="account-page">
+      <h1>Account</h1>
+      ${state.user ? `<article class="account-card"><strong>${state.user.name}</strong><span>${state.user.email}</span><span>${state.user.phone}</span><button data-action="logout">Log out</button></article>` : `<button class="primary-action full" data-sheet="account">Login, sign up, or continue as guest</button>`}
+      <section class="reward-card"><strong>Rewards Club</strong><span>${state.user?.rewards ? "Joined" : "Join during sign up"}</span></section>
+    </section>
+  `;
+}
+
+function renderBottomNav() {
+  const items = [
+    ["account", "AC", "Account"],
+    ["more", "MO", "More"],
+    ["menu", "MN", "Menu"],
+    ["offers", "OF", "Offers"],
+    ["cart", "CT", "Cart"],
+  ];
+  return `
+    <nav class="mobile-bottom-nav">
+      ${items.map(([page, icon, label]) => `<button class="${state.page === page ? "active" : ""}" data-page="${page}"><span>${icon}</span>${label}${page === "cart" && cartCount() ? `<b>${cartCount()}</b>` : ""}</button>`).join("")}
+    </nav>
+  `;
+}
+
+function renderSheets() {
+  return `
+    ${state.sheet === "cookies" ? renderCookieSheet() : ""}
+    ${state.sheet === "cookie-settings" ? renderCookieSettings() : ""}
+    ${state.sheet === "location" ? renderLocationSheet() : ""}
+    ${!context() && !state.sheet ? renderStartSheet() : ""}
+    ${state.sheet === "delivery" ? renderDeliveryFlow() : ""}
+    ${state.sheet === "pickup" ? renderPickupFlow() : ""}
+    ${state.sheet === "address-confirm" ? renderAddressConfirm() : ""}
+    ${state.sheet === "account" ? renderAccountSheet() : ""}
+    ${state.sheet === "language" ? renderLanguageSheet() : ""}
+    ${state.selectedProduct ? renderProductSheet() : ""}
+    ${state.upsellOpen ? renderUpsellSheet() : ""}
+    ${state.minOrderOpen ? renderMinimumSheet() : ""}
+    ${state.addressConfirmOpen ? renderCheckoutAddressConfirm() : ""}
+    ${state.sheet === "checkout" ? renderCheckoutSheet() : ""}
+  `;
+}
+
+function sheet(content, extra = "") {
+  return `<div class="sheet-backdrop ${extra}"><section class="bottom-sheet">${content}</section></div>`;
+}
+
+function renderCookieSheet() {
+  return sheet(`
+    <h2>We use cookies to improve your ordering experience.</h2>
+    <p>Cookies store your cart, preferences, and local MVP session.</p>
+    <button class="primary-action full" data-cookie-choice="all">Accept all</button>
+    <button class="secondary-action full" data-sheet="cookie-settings">Manage settings</button>
+    <button class="text-button full" data-cookie-choice="required">Reject optional cookies</button>
+  `, "blocking-modal");
+}
+
+function renderCookieSettings() {
+  const decision = read("cookieDecision") || { required: true, analytics: false };
+  return sheet(`
+    <h2>Cookie Settings</h2>
+    <label class="setting-row"><span>Required cookies</span><input type="checkbox" checked disabled /></label>
+    <label class="setting-row"><span>Analytics cookies</span><input type="checkbox" ${decision.analytics ? "checked" : ""} data-cookie-analytics /></label>
+    <button class="primary-action full" data-action="save-cookie-settings">Save settings</button>
+  `);
+}
+
+function renderLocationSheet() {
+  return sheet(`
+    <h2>Allow location access?</h2>
+    <p>Location helps check delivery availability and nearest restaurant. You can enter an address manually.</p>
+    <button class="primary-action full" data-action="allow-location">Allow location</button>
+    <button class="secondary-action full" data-action="manual-address">Enter address manually</button>
+  `);
+}
+
+function renderStartSheet() {
+  const lang = t[state.language] || t.en;
+  return sheet(`
+    <h2>${lang.start}</h2>
+    <button class="start-button delivery" data-sheet="delivery">${lang.delivery}</button>
+    <button class="start-button pickup" data-sheet="pickup">${lang.pickup}</button>
+    <section class="rewards-mini"><strong>${lang.rewards}</strong><span>Save details and vouchers locally for this MVP.</span></section>
+    <div class="start-shortcuts">
+      <button data-sheet="language">${lang.language}</button>
+      <button data-sheet="account">${lang.account}</button>
+    </div>
+  `);
+}
+
+function renderDeliveryFlow() {
+  const address = read("deliveryAddress") || "";
+  const quote = quoteDelivery(address, subtotal());
+  return sheet(`
+    <button class="sheet-back" data-sheet="">Back</button>
+    <h2>Delivery</h2>
+    <form id="deliveryFlowForm">
+      <label class="field">Address search<input name="address" placeholder="Start typing your address here..." value="${address}" required /></label>
+      <section class="address-section"><span>Current</span>${address ? `<button class="address-card" type="button" data-select-current-address>${address}<small>${quote.message}</small></button>` : `<p>No saved address yet.</p>`}</section>
+      ${address && !quote.available ? `<div class="minimum-alert">${quote.message}</div>` : ""}
+      <label class="field">Delivery date<select name="date">${[0, 1, 2, 3].map((offset) => `<option value="${todayISO(offset)}">${offset === 0 ? "Today" : offset === 1 ? "Tomorrow" : todayISO(offset)}</option>`).join("")}</select></label>
+      <label class="field">Delivery time<select name="time">${pickupSlots().map((slot) => `<option>${slot}</option>`).join("")}</select></label>
+      <p class="helper-copy">${settings().online ? "Store is open. You can deliver now." : "Store is currently closed. Choose a later time."}</p>
+      <button class="primary-action full" type="submit">${settings().online ? "Deliver now" : "Deliver later"}</button>
+    </form>
+  `);
+}
+
+function renderPickupFlow() {
+  return sheet(`
+    <button class="sheet-back" data-sheet="">Back</button>
+    <h2>Pickup</h2>
+    <p>${storeAddress}</p>
+    <form id="pickupFlowForm">
+      <label class="field">Pickup day<select name="date">${[0, 1, 2, 3, 4].map((offset) => `<option value="${todayISO(offset)}">${offset === 0 ? "Today" : offset === 1 ? "Tomorrow" : todayISO(offset)}</option>`).join("")}</select></label>
+      <label class="field">Pickup time<select name="time">${pickupSlots().map((slot, index) => `<option ${index === 3 ? "selected" : ""}>${slot}</option>`).join("")}</select></label>
+      <p class="helper-copy">${settings().online ? "Choose a pickup time." : "Restaurant is closed now. Next available time is shown."}</p>
+      <button class="primary-action full" type="submit">Continue to menu</button>
+    </form>
+  `);
+}
+
+function renderAddressConfirm() {
+  const ctx = state.pendingCheckout;
+  return sheet(`
+    <h2>Please confirm your delivery address</h2>
+    <article class="address-card">${ctx.address}<small>${quoteDelivery(ctx.address, subtotal()).message}</small></article>
+    <button class="secondary-action full" data-sheet="delivery">Edit address</button>
+    <button class="primary-action full" data-action="confirm-delivery-start">Confirm address</button>
+  `);
+}
+
+function renderAccountSheet() {
+  return sheet(`
+    <h2>${state.authMode === "login" ? "Login" : state.authMode === "guest" ? "Guest details" : "Create account"}</h2>
+    <div class="auth-tabs">
+      <button class="${state.authMode === "guest" ? "active" : ""}" data-auth-mode="guest">Guest</button>
+      <button class="${state.authMode === "login" ? "active" : ""}" data-auth-mode="login">Login</button>
+      <button class="${state.authMode === "signup" ? "active" : ""}" data-auth-mode="signup">Sign up</button>
+    </div>
+    <button class="google-button" disabled>Continue with Google</button>
+    <button class="google-button" disabled>Continue with Apple</button>
+    <button class="google-button" disabled>Continue with Facebook</button>
+    <small class="helper-copy">Social login placeholders are disabled until OAuth is configured.</small>
+    <form id="accountForm">
+      <label class="field">Name<input name="name" value="${state.user?.name || ""}" />${accountError("name")}</label>
+      <label class="field">Mobile number<input name="phone" value="${state.user?.phone || ""}" />${accountError("phone")}</label>
+      <label class="field">Email<input name="email" type="email" value="${state.user?.email || ""}" />${accountError("email")}</label>
+      ${state.authMode === "signup" ? `<label class="field">Password<input name="password" type="password" />${accountError("password")}</label><label class="terms-line"><input name="terms" type="checkbox" /> I accept terms and privacy</label>${accountError("terms")}<label class="terms-line"><input name="rewards" type="checkbox" /> Join Rewards Club</label>` : ""}
+      <button class="primary-action full" type="submit">${state.authMode === "login" ? "Login" : state.authMode === "guest" ? "Continue as guest" : "Create account"}</button>
+    </form>
+  `);
+}
+
+function renderLanguageSheet() {
+  return sheet(`
+    <h2>Language</h2>
+    <button class="language-row ${state.language === "en" ? "active" : ""}" data-language="en">English</button>
+    <button class="language-row ${state.language === "de" ? "active" : ""}" data-language="de">German</button>
+  `);
+}
+
+function productTotal() {
+  const product = state.selectedProduct;
+  const cfg = state.productConfig;
+  if (!product || !cfg) return 0;
+  const sizePrice = { Small: -2, Medium: 0, Large: 3 }[cfg.size] || 0;
+  const basePrice = cfg.base === "Cheese crust" ? 2.5 : 0;
+  const toppingPrice = cfg.toppings.reduce((sum, topping) => sum + topping.price, 0);
+  return Math.max(0, product.price + sizePrice + basePrice + toppingPrice) * cfg.quantity;
+}
+
+function renderProductSheet() {
+  const product = state.selectedProduct;
+  const cfg = state.productConfig;
+  return sheet(`
+    <button class="modal-close" data-action="close-product">Close</button>
+    <img class="detail-image" src="${product.image}" alt="${product.name}" />
+    <h2>${product.name}</h2>
+    <strong>${money(product.price)}</strong>
+    <p>${product.description}</p>
+    <div class="info-row"><span>Allergens: ${product.allergens}</span><span>VAT included</span></div>
+    ${optionGroup("Size", "size", ["Small", "Medium", "Large"], cfg.size)}
+    ${optionGroup("Base/crust", "base", ["Classic", "Thin", "Cheese crust"], cfg.base)}
+    ${optionGroup("Sauce", "sauce", ["Tomato", "Garlic", "BBQ", "No sauce"], cfg.sauce)}
+    <section class="topping-editor"><h3>Toppings</h3>${toppingOptions.map((topping) => {
+      const selected = cfg.toppings.some((item) => item.id === topping.id);
+      return `<article><span>${topping.name}${topping.price ? ` · ${money(topping.price)}` : " included"}</span><button data-toggle-topping="${topping.id}">${selected ? "-" : "+"}</button></article>`;
+    }).join("")}</section>
+    <label class="field">Notes<textarea data-product-notes>${cfg.notes || ""}</textarea></label>
+    <div class="quantity-control modal-quantity"><button data-product-qty="-">-</button><b>${cfg.quantity}</b><button data-product-qty="+">+</button></div>
+    <button class="sticky-checkout product-add" data-action="add-product">Add to Cart · ${money(productTotal())}</button>
+  `);
+}
+
+function optionGroup(title, key, values, selected) {
+  return `<section class="option-group"><h3>${title}</h3>${values.map((value) => `<button class="${selected === value ? "active" : ""}" data-product-option="${key}" data-option-value="${value}">${value}</button>`).join("")}</section>`;
+}
+
+function renderUpsellSheet() {
+  return sheet(`
+    <h2>Would you like any add ons?</h2>
+    <div class="upsell-grid">${read("upsellProducts").map((item) => `<button class="${state.selectedUpsells.has(item.id) ? "active" : ""}" data-upsell-select="${item.id}"><img src="${item.image}" alt="" /><span>${item.name}</span><strong>${money(item.price)}</strong></button>`).join("")}</div>
+    <button class="primary-action full" data-action="add-upsells">Add selected</button>
+    <button class="text-button full" data-action="skip-upsells">Skip</button>
+  `);
+}
+
+function renderMinimumSheet() {
+  const missing = Math.max(0, Number(settings().minimumOrder || 15) - subtotal());
+  return sheet(`
+    <h2>Sorry, your order does not meet the minimum delivery amount of ${money(settings().minimumOrder)}</h2>
+    <p>Add ${money(missing)} more to continue.</p>
+    ${renderSuggestedAddons()}
+    <button class="primary-action full" data-action="close-minimum">Add more items</button>
+  `);
+}
+
+function renderCheckoutAddressConfirm() {
+  return sheet(`
+    <h2>Please confirm your delivery address</h2>
+    <article class="address-card">${state.pendingCheckout.address}<small>${quoteDelivery(state.pendingCheckout.address, subtotal()).message}</small></article>
+    <button class="secondary-action full" data-action="edit-checkout-address">Edit address</button>
+    <button class="primary-action full" data-action="place-confirmed-order">Confirm and place order</button>
+  `);
+}
+
+function renderCheckoutSheet() {
+  const ctx = context();
+  const customer = state.user || {};
+  return sheet(`
+    <h2>Checkout</h2>
+    <form id="checkoutForm">
+      <section class="checkout-section"><h3>Order details</h3><p>${ctx.type === "delivery" ? ctx.address : storeAddress}<br />${ctx.date} at ${ctx.time}</p></section>
+      <section class="checkout-section"><h3>My Details</h3>
+        <label class="field">Name<input name="name" value="${customer.name || ""}" />${checkoutError("name")}</label>
+        <label class="field">Phone<input name="phone" value="${customer.phone || ""}" />${checkoutError("phone")}</label>
+        <label class="field">Email<input name="email" type="email" value="${customer.email || ""}" />${checkoutError("email")}</label>
+      </section>
+      <section class="checkout-section"><h3>Instructions</h3><textarea name="notes" placeholder="${ctx.type === "delivery" ? "Doorbell, floor, apartment..." : "Pickup notes..."}"></textarea></section>
+      <section class="checkout-section"><h3>Terms and Conditions</h3><label class="terms-line"><input name="terms" type="checkbox" /> I agree to privacy and order terms</label>${checkoutError("terms")}</section>
+      <section class="checkout-section"><h3>Payment Method</h3>${paymentMethods.map((method) => `<label class="payment-card ${method === "Cash" ? "active" : "disabled"}"><input type="radio" name="payment" value="${method}" ${method === "Cash" ? "checked" : "disabled"} /> ${method}${method === "Cash" ? "" : " · coming soon"}</label>`).join("")}</section>
+      <button class="sticky-checkout" type="submit">Place order · ${money(total())}</button>
+    </form>
+  `);
 }
 
 function accountError(name) {
   return state.accountErrors[name] ? `<small class="field-error">${state.accountErrors[name]}</small>` : "";
 }
 
-function renderAddressConfirmation() {
-  const address = state.pendingForm?.address || customerAddress();
-  return `
-    <div class="modal-backdrop">
-      <section class="auth-modal address-confirm">
-        <span class="live-badge">Delivery address</span>
-        <h2>${copy.confirmAddress}</h2>
-        <p>${sanitize(address)}</p>
-        <div class="confirmation-actions">
-          <button class="secondary-action" data-action="edit-address">Edit address</button>
-          <button class="primary-action" data-action="confirm-address">Confirm and place order</button>
-        </div>
-      </section>
-    </div>
-  `;
+function checkoutError(name) {
+  return state.checkoutErrors[name] ? `<small class="field-error">${state.checkoutErrors[name]}</small>` : "";
 }
 
-function renderCookieConsent() {
-  return `
-    <div class="modal-backdrop blocking-modal">
-      <section class="auth-modal consent-card">
-        <span class="live-badge">Privacy</span>
-        <h2>We use cookies to run ordering</h2>
-        <p>Cookies keep your cart, account, and order preferences on this device for the MVP.</p>
-        <button class="primary-action full" data-action="accept-cookies">Accept cookies</button>
-      </section>
-    </div>
-  `;
-}
-
-function renderLocationPrompt() {
-  return `
-    <div class="modal-backdrop blocking-modal">
-      <section class="auth-modal consent-card">
-        <span class="live-badge">Location</span>
-        <h2>Use your location?</h2>
-        <p>We can save an approximate location to help with delivery later. You can continue manually.</p>
-        <div class="confirmation-actions">
-          <button class="secondary-action" data-action="skip-location">Enter manually</button>
-          <button class="primary-action" data-action="allow-location">Use my location</button>
-        </div>
-      </section>
-    </div>
-  `;
+function updateProductGrid() {
+  const grid = app.querySelector("[data-product-grid]");
+  if (grid) grid.innerHTML = renderProductGrid();
 }
 
 function showToast(message) {
@@ -467,154 +547,109 @@ function showToast(message) {
   if (host) host.innerHTML = `<div class="toast">${message}</div>`;
   setTimeout(() => {
     state.toast = "";
-    const currentHost = app.querySelector(".toast-host");
-    if (currentHost) currentHost.innerHTML = "";
+    const current = app.querySelector(".toast-host");
+    if (current) current.innerHTML = "";
   }, 2200);
 }
 
-function addCustomizedProduct() {
-  const product = state.selectedProduct;
-  const selectedExtras = [...document.querySelectorAll("[data-extra]:checked")].map((input) => extras.find((extra) => extra.id === input.value));
-  const selectedSauce = sauces.find((sauce) => sauce.id === document.querySelector("[data-sauce]:checked")?.value) || sauces[0];
-  const option = document.querySelector("[data-custom-option]")?.value || product.options[0];
-  const notes = sanitize(document.querySelector("[data-item-notes]")?.value);
-  const quantity = Number(product.quantity || 1);
-  const lineTotal = product.price + selectedSauce.price + selectedExtras.reduce((sum, extra) => sum + extra.price, 0);
-  write("cart", [{
-    cartId: uid("cart"),
-    productId: product.id,
-    name: product.name,
-    quantity,
-    lineTotal,
-    summary: [option, selectedSauce.name, ...selectedExtras.map((extra) => extra.name), notes].filter(Boolean).join(" · "),
-  }, ...cart()]);
-  state.selectedProduct = null;
+function openProduct(product) {
+  state.selectedProduct = product;
+  state.productConfig = { size: "Medium", base: "Classic", sauce: "Tomato", toppings: toppingOptions.filter((item) => item.included), quantity: 1, notes: "" };
   render();
-  showToast("Added to cart");
 }
 
-function validateAccount(formData) {
-  const errors = {};
-  if (state.authMode === "signup" && !required(formData.get("name"))) errors.name = "Name is required";
-  if (!email(formData.get("email"))) errors.email = "Enter a valid email";
-  if (state.authMode === "signup" && !required(formData.get("phone"))) errors.phone = "Phone is required";
-  state.accountErrors = errors;
-  return !Object.keys(errors).length;
+function addProductToCart() {
+  const product = state.selectedProduct;
+  const cfg = state.productConfig;
+  const unitTotal = productTotal() / cfg.quantity;
+  write("cart", [newCartItem(product, {
+    ...cfg,
+    unitPrice: unitTotal,
+    lineTotal: unitTotal,
+    summary: [cfg.size, cfg.base, cfg.sauce, ...cfg.toppings.map((item) => item.name), cfg.notes].filter(Boolean).join(" · "),
+  }), ...cart()]);
+  state.selectedProduct = null;
+  state.productConfig = null;
+  state.upsellOpen = true;
+  render();
 }
 
-function checkoutPayload(form) {
-  const formData = new FormData(form);
-  return {
-    name: sanitize(formData.get("name")),
-    email: sanitize(formData.get("email")),
-    phone: sanitize(formData.get("phone")),
-    address: state.fulfillment === "delivery" ? sanitize(formData.get("address")) : "",
-    notes: sanitize(formData.get("notes")),
-  };
+function addUpsell(id) {
+  const item = read("upsellProducts").find((upsell) => upsell.id === id);
+  if (!item) return;
+  write("cart", [{ cartId: `cart-${Date.now()}`, productId: item.productId, name: item.name, quantity: 1, unitPrice: item.price, lineTotal: item.price, toppings: [], extras: [], summary: "Add on" }, ...cart()]);
 }
 
-function validateOrderForm(form) {
-  const formData = new FormData(form);
-  const errors = validateCheckout(formData, state.fulfillment);
-  state.formErrors = errors;
-  return !Object.keys(errors).length;
+function continueToCheckout() {
+  if (context()?.type === "delivery" && subtotal() < Number(settings().minimumOrder || 15)) {
+    state.minOrderOpen = true;
+    render();
+    return;
+  }
+  if (!state.user) {
+    state.sheet = "account";
+    render();
+    return;
+  }
+  state.sheet = "checkout";
+  render();
 }
 
 async function placeOrder(details) {
-  state.submitting = true;
-  state.addressConfirmOpen = false;
-  render();
-
-  if (state.fulfillment === "delivery") write("deliveryAddress", details.address);
-  const quote = deliveryQuote(details.address);
-  const order = {
-    id: `GK-${Math.floor(1300 + Math.random() * 700)}`,
-    restaurantId: "giros-king",
-    customer: details.name,
-    email: details.email,
-    phone: details.phone,
-    status: "Confirmed",
-    fulfillment: state.fulfillment === "delivery" ? "Delivery" : "Pickup",
-    zone: state.fulfillment === "delivery" ? quote.area : "Pickup counter",
-    address: details.address,
-    pickupSchedule: state.fulfillment === "pickup" ? pickupSchedule() : null,
-    notes: details.notes,
-    paymentMethod: "Pay at restaurant",
-    total: Math.max(0, subtotal() + quote.fee),
-    subtotal: subtotal(),
-    deliveryFee: quote.fee,
-    discount: 0,
-    items: cart().map((item) => `${item.quantity}x ${item.name}${item.summary ? ` (${item.summary})` : ""}`).join(", "),
-    orderItems: cart().map((item) => ({
-      productId: item.productId,
-      name: item.name,
-      quantity: item.quantity,
-      unitPrice: item.lineTotal,
-      lineTotal: item.lineTotal * item.quantity,
-      options: item.summary,
-    })),
-    createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    confirmedAt: new Date().toISOString(),
-  };
-
-  let persistedOrder = order;
+  const order = createOrderFromCart({ cart: cart(), context: context(), customer: state.user, notes: details.notes, paymentMethod: details.payment, voucher: state.appliedVoucher });
+  let persisted = order;
   try {
     const result = await createOrder(order);
-    persistedOrder = { ...result.order, status: "Confirmed" };
+    persisted = { ...result.order, status: "confirmed", orderItems: order.orderItems };
   } catch {
     showToast("Order saved locally. Email service unavailable.");
   }
-
-  write("orders", [persistedOrder, ...read("orders")]);
-  write("lastOrder", persistedOrder);
+  saveOrder(persisted);
   write("cart", []);
-  state.lastConfirmation = persistedOrder;
-  state.submitting = false;
-  state.pendingForm = null;
-  state.formErrors = {};
+  state.sheet = null;
+  state.addressConfirmOpen = false;
+  state.pendingCheckout = null;
+  state.page = "cart";
   render();
   showToast("Order confirmed");
-  setTimeout(() => document.querySelector("#confirmation")?.scrollIntoView({ behavior: "smooth" }), 50);
 }
 
 app.addEventListener("click", (event) => {
-  const productButton = event.target.closest("[data-product]");
+  const page = event.target.closest("[data-page]")?.dataset.page;
+  const sheetName = event.target.closest("[data-sheet]")?.dataset.sheet;
   const action = event.target.closest("[data-action]")?.dataset.action;
-  const categoryButton = event.target.closest("[data-category]");
+  const category = event.target.closest("[data-category]")?.dataset.category;
+  const productId = event.target.closest("[data-product]")?.dataset.product || event.target.closest("[data-offer-product]")?.dataset.offerProduct;
+  const banner = event.target.closest("[data-banner]")?.dataset.banner;
+  const authMode = event.target.closest("[data-auth-mode]")?.dataset.authMode;
+  const language = event.target.closest("[data-language]")?.dataset.language;
+  const toppingId = event.target.closest("[data-toggle-topping]")?.dataset.toggleTopping;
+  const optionKey = event.target.closest("[data-product-option]")?.dataset.productOption;
+  const optionValue = event.target.closest("[data-product-option]")?.dataset.optionValue;
+  const qty = event.target.closest("[data-product-qty]")?.dataset.productQty;
   const dec = event.target.closest("[data-dec]");
   const inc = event.target.closest("[data-inc]");
-  const authMode = event.target.closest("[data-auth-mode]")?.dataset.authMode;
-  const startMode = event.target.closest("[data-start-mode]")?.dataset.startMode;
 
-  if (productButton) {
-    const product = activeProducts().find((item) => item.id === productButton.dataset.product);
-    if (product) state.selectedProduct = { ...product, quantity: 1 };
+  if (page) {
+    state.page = page;
+    state.sheet = null;
     render();
   }
-  if (categoryButton) {
-    state.category = categoryButton.dataset.category;
+  if (sheetName !== undefined) {
+    state.sheet = sheetName || null;
     render();
   }
-  if (dec || inc) {
-    const id = (dec || inc).dataset.dec || (dec || inc).dataset.inc;
-    write("cart", cart().flatMap((item) => item.cartId !== id ? item : item.quantity + (inc ? 1 : -1) > 0 ? [{ ...item, quantity: item.quantity + (inc ? 1 : -1) }] : []));
-    render();
+  if (category) {
+    state.category = category;
+    updateProductGrid();
+    app.querySelectorAll("[data-category]").forEach((button) => button.classList.toggle("active", button.dataset.category === category));
   }
-  if (event.target.closest("[data-modal-dec]") && state.selectedProduct) {
-    state.selectedProduct.quantity = Math.max(1, Number(state.selectedProduct.quantity || 1) - 1);
-    render();
+  if (productId) {
+    const product = read("products").find((item) => item.id === productId);
+    if (product) openProduct(product);
   }
-  if (event.target.closest("[data-modal-inc]") && state.selectedProduct) {
-    state.selectedProduct.quantity = Number(state.selectedProduct.quantity || 1) + 1;
-    render();
-  }
-  if (action === "add-customized") addCustomizedProduct();
-  if (action === "clear-cart") {
-    write("cart", []);
-    render();
-  }
-  if (action === "auth") {
-    state.authOpen = true;
+  if (banner !== undefined) {
+    state.bannerIndex = Number(banner);
     render();
   }
   if (authMode) {
@@ -622,141 +657,216 @@ app.addEventListener("click", (event) => {
     state.accountErrors = {};
     render();
   }
-  if (action === "change-start") {
-    state.fulfillment = "";
-    write("fulfillmentChoice", "");
+  if (language) {
+    state.language = language;
+    write("language", language);
+    state.sheet = null;
     render();
   }
-  if (startMode) {
-    const holder = app.querySelector("[data-start-details]");
-    const template = app.querySelector(startMode === "delivery" ? "[data-delivery-template]" : "[data-pickup-template]");
-    if (holder && template) holder.innerHTML = template.innerHTML;
-  }
-  if (action === "accept-cookies") {
-    write("cookieConsent", true);
-    state.locationPrompt = true;
+  if (toppingId && state.productConfig) {
+    const topping = toppingOptions.find((item) => item.id === toppingId);
+    const exists = state.productConfig.toppings.some((item) => item.id === toppingId);
+    state.productConfig.toppings = exists ? state.productConfig.toppings.filter((item) => item.id !== toppingId) : [...state.productConfig.toppings, topping];
     render();
   }
-  if (action === "skip-location") {
-    write("locationPreference", { allowed: false });
-    state.locationPrompt = false;
+  if (optionKey && state.productConfig) {
+    state.productConfig[optionKey] = optionValue;
     render();
   }
-  if (action === "allow-location") requestLocation();
-  if (action === "edit-address") {
-    state.addressConfirmOpen = false;
+  if (qty && state.productConfig) {
+    state.productConfig.quantity = Math.max(1, state.productConfig.quantity + (qty === "+" ? 1 : -1));
     render();
-    setTimeout(() => document.querySelector("#checkout")?.scrollIntoView({ behavior: "smooth" }), 50);
   }
-  if (action === "confirm-address" && state.pendingForm) placeOrder(state.pendingForm);
-  if (event.target.matches("[data-close-modal]")) {
+  if (dec || inc) {
+    const id = (dec || inc).dataset.dec || (dec || inc).dataset.inc;
+    write("cart", cart().flatMap((item) => item.cartId !== id ? item : item.quantity + (inc ? 1 : -1) > 0 ? [{ ...item, quantity: item.quantity + (inc ? 1 : -1) }] : []));
+    render();
+  }
+  if (action === "close-product") {
     state.selectedProduct = null;
     render();
   }
-  if (event.target.matches("[data-close-auth]")) {
-    state.authOpen = false;
+  if (action === "add-product") addProductToCart();
+  if (action === "add-upsells") {
+    [...state.selectedUpsells].forEach(addUpsell);
+    state.selectedUpsells.clear();
+    state.upsellOpen = false;
+    state.page = "cart";
     render();
   }
-  if (event.target.closest("[data-scroll-menu]")) document.querySelector("#menu")?.scrollIntoView({ behavior: "smooth" });
-  if (event.target.closest("[data-scroll-cart]")) document.querySelector("#cart")?.scrollIntoView({ behavior: "smooth" });
+  if (action === "skip-upsells") {
+    state.upsellOpen = false;
+    state.page = "cart";
+    render();
+  }
+  if (event.target.closest("[data-upsell-select]")) {
+    const id = event.target.closest("[data-upsell-select]").dataset.upsellSelect;
+    state.selectedUpsells.has(id) ? state.selectedUpsells.delete(id) : state.selectedUpsells.add(id);
+    render();
+  }
+  if (event.target.closest("[data-add-upsell]")) {
+    addUpsell(event.target.closest("[data-add-upsell]").dataset.addUpsell);
+    render();
+  }
+  if (action === "checkout") continueToCheckout();
+  if (action === "close-minimum") {
+    state.minOrderOpen = false;
+    state.page = "menu";
+    render();
+  }
+  if (action === "edit-checkout-address") {
+    state.addressConfirmOpen = false;
+    state.sheet = "checkout";
+    render();
+  }
+  if (action === "place-confirmed-order") placeOrder(state.pendingCheckout);
+  if (action === "logout") {
+    write("session", null);
+    state.user = null;
+    render();
+  }
+  if (action === "allow-location") requestLocation();
+  if (action === "manual-address") {
+    write("locationPreference", { allowed: false });
+    state.sheet = "delivery";
+    render();
+  }
+  if (action === "save-cookie-settings") {
+    const analytics = Boolean(app.querySelector("[data-cookie-analytics]")?.checked);
+    write("cookieDecision", { required: true, analytics });
+    state.sheet = read("locationPreference") ? null : "location";
+    render();
+  }
+  if (event.target.closest("[data-cookie-choice]")) {
+    const choice = event.target.closest("[data-cookie-choice]").dataset.cookieChoice;
+    write("cookieDecision", { required: true, analytics: choice === "all" });
+    state.sheet = read("locationPreference") ? null : "location";
+    render();
+  }
+  if (action === "apply-voucher") applyVoucher();
+  if (event.target.closest("[data-save-voucher]")) saveVoucher(event.target.closest("[data-save-voucher]").dataset.saveVoucher);
+  if (event.target.closest("[data-saved-voucher]")) useSavedVoucher(event.target.closest("[data-saved-voucher]").dataset.savedVoucher);
+  if (action === "start-over") {
+    write("orderContext", null);
+    state.orderContext = null;
+    state.sheet = null;
+    render();
+  }
 });
 
 app.addEventListener("input", (event) => {
   if (event.target.matches("[data-search]")) {
     state.query = event.target.value;
-    updateProductGrid();
+    window.clearTimeout(state.searchTimer);
+    state.searchTimer = window.setTimeout(updateProductGrid, 120);
   }
-  if (event.target.matches("#checkoutForm input[name='address']")) {
-    write("deliveryAddress", sanitize(event.target.value));
-    const feeNote = app.querySelector("[data-fee-note]");
-    if (feeNote) feeNote.innerHTML = renderFeeNoteContent();
-    const totals = app.querySelector("[data-totals]");
-    if (totals) totals.innerHTML = renderTotalsContent();
-  }
+  if (event.target.matches("[data-voucher-input]")) state.voucherCode = event.target.value;
+  if (event.target.matches("[data-product-notes]") && state.productConfig) state.productConfig.notes = event.target.value;
 });
 
 app.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (event.target.id === "deliveryStartForm") {
-    const address = sanitize(new FormData(event.target).get("address"));
-    if (!address) return showToast("Enter a delivery address");
-    write("deliveryAddress", address);
-    write("fulfillmentChoice", "delivery");
-    state.fulfillment = "delivery";
-    render();
-  }
-  if (event.target.id === "pickupStartForm") {
+  if (event.target.id === "deliveryFlowForm") {
     const data = new FormData(event.target);
-    write("pickupSchedule", { day: String(data.get("day")), time: String(data.get("time")) });
-    write("fulfillmentChoice", "pickup");
-    state.fulfillment = "pickup";
+    const address = sanitize(data.get("address"));
+    const quote = quoteDelivery(address, subtotal());
+    write("deliveryAddress", address);
+    if (!quote.available) return showToast(quote.message);
+    state.pendingCheckout = { type: "delivery", address, date: String(data.get("date")), time: String(data.get("time")) };
+    state.sheet = "address-confirm";
     render();
   }
-  if (event.target.id === "authForm") {
-    const formData = new FormData(event.target);
-    if (!validateAccount(formData)) return render();
-    const existing = read("session") || {};
-    state.user = {
-      name: sanitize(formData.get("name")) || existing.name || "Customer",
-      email: sanitize(formData.get("email")),
-      phone: sanitize(formData.get("phone")) || existing.phone || "",
-    };
-    write("session", state.user);
-    state.authOpen = false;
-    state.accountErrors = {};
+  if (event.target.id === "pickupFlowForm") {
+    const data = new FormData(event.target);
+    state.orderContext = { type: "pickup", storeAddress, date: String(data.get("date")), time: String(data.get("time")) };
+    write("orderContext", state.orderContext);
+    state.sheet = null;
     render();
-    showToast("Account saved");
+  }
+  if (event.target.id === "accountForm") {
+    const data = new FormData(event.target);
+    const input = { name: data.get("name"), phone: data.get("phone"), email: data.get("email"), password: data.get("password"), terms: Boolean(data.get("terms")), rewards: Boolean(data.get("rewards")) };
+    const errors = validateAccount(input, { requirePassword: state.authMode === "signup", requireTerms: state.authMode === "signup" });
+    state.accountErrors = errors;
+    if (Object.keys(errors).length) return render();
+    state.user = saveDemoUser(input, state.authMode);
+    state.sheet = null;
+    render();
   }
   if (event.target.id === "checkoutForm") {
-    if (!state.user) {
-      state.authOpen = true;
-      render();
-      return;
-    }
-    if (!validateOrderForm(event.target)) {
-      render();
-      showToast("Please check the highlighted fields");
-      return;
-    }
-    const details = checkoutPayload(event.target);
-    if (state.fulfillment === "delivery") {
-      state.pendingForm = details;
+    const data = new FormData(event.target);
+    if (context().type === "delivery") data.set("address", context().address);
+    const errors = validateCheckout(data, context().type);
+    if (!data.get("terms")) errors.terms = "Please accept terms";
+    state.checkoutErrors = errors;
+    if (Object.keys(errors).length) return render();
+    state.user = saveDemoUser({ name: data.get("name"), email: data.get("email"), phone: data.get("phone") }, state.user?.type || "guest");
+    state.pendingCheckout = { notes: sanitize(data.get("notes")), payment: data.get("payment") || "Cash", address: context().address };
+    if (context().type === "delivery") {
       state.addressConfirmOpen = true;
       render();
-      return;
+    } else {
+      placeOrder(state.pendingCheckout);
     }
-    placeOrder(details);
   }
 });
+
+function applyVoucher() {
+  const code = sanitize(state.voucherCode).toUpperCase();
+  const voucher = read("promotions").find((promo) => promo.active && promo.code === code);
+  if (!voucher) return showToast("Voucher not found");
+  state.appliedVoucher = voucher;
+  write("appliedVoucher", voucher);
+  render();
+}
+
+function saveVoucher(id) {
+  const voucher = read("promotions").find((promo) => promo.id === id);
+  if (!voucher) return;
+  write("savedVouchers", [voucher, ...read("savedVouchers").filter((item) => item.id !== id)]);
+  showToast("Voucher saved");
+}
+
+function useSavedVoucher(id) {
+  const voucher = read("savedVouchers").find((item) => item.id === id);
+  if (!voucher) return;
+  state.appliedVoucher = voucher;
+  state.voucherCode = voucher.code;
+  write("appliedVoucher", voucher);
+  render();
+}
 
 function requestLocation() {
   if (!navigator.geolocation) {
     write("locationPreference", { allowed: false, reason: "unavailable" });
-    state.locationPrompt = false;
+    state.sheet = "delivery";
     render();
     return;
   }
   navigator.geolocation.getCurrentPosition(
     (position) => {
-      write("locationPreference", {
-        allowed: true,
-        lat: Number(position.coords.latitude.toFixed(3)),
-        lng: Number(position.coords.longitude.toFixed(3)),
-      });
-      state.locationPrompt = false;
+      write("locationPreference", { allowed: true, lat: Number(position.coords.latitude.toFixed(3)), lng: Number(position.coords.longitude.toFixed(3)) });
+      state.sheet = "delivery";
       render();
     },
     () => {
       write("locationPreference", { allowed: false });
-      state.locationPrompt = false;
+      state.sheet = "delivery";
       render();
     },
-    { enableHighAccuracy: false, maximumAge: 600000, timeout: 5000 },
+    { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 },
   );
 }
 
-getSupabaseStatus().then((status) => {
-  console.info(`[Giros King] ${status.mode}`);
+app.addEventListener("click", (event) => {
+  if (event.target.closest("[data-action='confirm-delivery-start']") && state.pendingCheckout) {
+    state.orderContext = state.pendingCheckout;
+    write("orderContext", state.orderContext);
+    state.pendingCheckout = null;
+    state.sheet = null;
+    render();
+  }
 });
 
+getSupabaseStatus().then((status) => console.info(`[Giros King] ${status.mode}`));
 render();

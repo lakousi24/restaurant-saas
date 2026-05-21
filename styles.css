@@ -1410,6 +1410,716 @@ p {
   }
 }
 
+/* Professional mobile ordering MVP */
+.customer-body .dominos-inspired {
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --primary: #0078a8;
+  --green: #20c267;
+  --promo: #e31837;
+  --ink: #111111;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  padding-bottom: 84px;
+}
+
+.customer-body .dominos-inspired button,
+.customer-body .dominos-inspired input,
+.customer-body .dominos-inspired select,
+.customer-body .dominos-inspired textarea {
+  font: inherit;
+}
+
+.app-topbar {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  left: 0;
+  padding: 12px 14px;
+  position: sticky;
+  right: 0;
+  top: 0;
+  z-index: 40;
+}
+
+.icon-button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 900;
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.order-context {
+  min-width: 0;
+}
+
+.order-context strong,
+.order-context span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-context span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.menu-blurred {
+  filter: blur(2px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.menu-preview {
+  opacity: 0.7;
+}
+
+.menu-page,
+.cart-page,
+.offers-page,
+.more-page,
+.account-page {
+  display: grid;
+  gap: 18px;
+  padding: 14px;
+}
+
+.search-shell {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 8px;
+}
+
+.search-shell input {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--ink);
+  min-height: 48px;
+  padding: 0 14px;
+  width: 100%;
+}
+
+.category-tabs {
+  background: white;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 18px;
+  margin: 0 -14px;
+  overflow-x: auto;
+  padding: 0 14px;
+  position: sticky;
+  top: 67px;
+  z-index: 20;
+}
+
+.category-tabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-weight: 900;
+  min-height: 48px;
+}
+
+.category-tabs button.active {
+  border-bottom-color: var(--primary);
+  color: var(--ink);
+}
+
+.promo-carousel {
+  display: grid;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.promo-banner {
+  background: linear-gradient(135deg, var(--primary), #00a1df);
+  border: 0;
+  border-radius: 20px;
+  color: white;
+  display: none;
+  min-height: 136px;
+  padding: 18px;
+  text-align: left;
+}
+
+.promo-banner.active {
+  display: grid;
+}
+
+.promo-banner span {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 900;
+  justify-self: start;
+  padding: 6px 10px;
+}
+
+.promo-banner strong {
+  font-size: 1.5rem;
+}
+
+.dots {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.dots button {
+  background: #cbd5e1;
+  border: 0;
+  border-radius: 999px;
+  height: 8px;
+  width: 8px;
+}
+
+.dots button.active {
+  background: var(--primary);
+  width: 22px;
+}
+
+.product-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.food-card {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 10px 28px rgba(17, 24, 39, 0.06);
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.food-image {
+  background: var(--surface);
+  border: 0;
+  min-height: 132px;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+}
+
+.food-image img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.food-image span {
+  background: var(--promo);
+  border-radius: 999px;
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 900;
+  left: 8px;
+  padding: 5px 8px;
+  position: absolute;
+  top: 8px;
+}
+
+.food-card > div {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.food-card h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.food-card p {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.food-card strong {
+  color: var(--ink);
+  font-size: 1.06rem;
+}
+
+.mobile-bottom-nav {
+  align-items: center;
+  background: white;
+  border-top: 1px solid var(--border);
+  bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  left: 0;
+  min-height: 72px;
+  position: fixed;
+  right: 0;
+  z-index: 45;
+}
+
+.mobile-bottom-nav button {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  display: grid;
+  font-size: 0.72rem;
+  font-weight: 900;
+  gap: 3px;
+  justify-items: center;
+  position: relative;
+}
+
+.mobile-bottom-nav button.active {
+  color: var(--primary);
+}
+
+.mobile-bottom-nav span {
+  background: var(--surface);
+  border-radius: 10px;
+  font-size: 0.7rem;
+  padding: 5px 7px;
+}
+
+.mobile-bottom-nav b {
+  background: var(--promo);
+  border-radius: 999px;
+  color: white;
+  font-size: 0.68rem;
+  min-width: 18px;
+  padding: 2px 5px;
+  position: absolute;
+  right: 18px;
+  top: 0;
+}
+
+.sheet-backdrop {
+  align-items: end;
+  background: rgba(17, 24, 39, 0.42);
+  display: grid;
+  inset: 0;
+  padding: 12px;
+  position: fixed;
+  z-index: 90;
+}
+
+.bottom-sheet {
+  background: white;
+  border-radius: 28px 28px 18px 18px;
+  box-shadow: 0 -18px 60px rgba(15, 23, 42, 0.18);
+  display: grid;
+  gap: 14px;
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.bottom-sheet h2 {
+  font-size: 1.6rem;
+  margin: 0;
+}
+
+.bottom-sheet p,
+.helper-copy {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.primary-action,
+.secondary-action,
+.text-button,
+.start-button,
+.sticky-checkout {
+  border-radius: 16px;
+  font-weight: 900;
+  min-height: 52px;
+  padding: 0 16px;
+}
+
+.primary-action,
+.start-button.delivery {
+  background: var(--primary);
+  border: 0;
+  color: white;
+}
+
+.start-button.pickup {
+  background: #111827;
+  border: 0;
+  color: white;
+}
+
+.secondary-action {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink);
+}
+
+.text-button {
+  background: transparent;
+  border: 0;
+  color: var(--primary);
+}
+
+.full {
+  width: 100%;
+}
+
+.start-button {
+  display: block;
+  font-size: 1.08rem;
+  text-align: center;
+  width: 100%;
+}
+
+.rewards-mini,
+.address-card,
+.voucher-box,
+.totals-card,
+.checkout-section,
+.account-card,
+.reward-card,
+.more-page article,
+.minimum-alert,
+.empty-state.clean {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.start-shortcuts {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+  padding-top: 12px;
+}
+
+.start-shortcuts button,
+.language-row {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--ink);
+  font-weight: 900;
+  min-height: 48px;
+}
+
+.language-row.active {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.field {
+  color: var(--ink);
+  display: grid;
+  font-weight: 800;
+  gap: 7px;
+}
+
+.field input,
+.field select,
+.field textarea,
+.voucher-box input,
+.checkout-section textarea {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--ink);
+  min-height: 48px;
+  padding: 12px;
+}
+
+.address-section {
+  display: grid;
+  gap: 8px;
+}
+
+.address-section > span {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.cart-item {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.cart-item span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  margin-top: 4px;
+}
+
+.quantity-control {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.quantity-control button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--ink);
+  height: 38px;
+  width: 38px;
+}
+
+.suggested-addons > div,
+.upsell-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.suggested-addons button,
+.upsell-grid button {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  text-align: left;
+}
+
+.upsell-grid button.active {
+  border-color: var(--green);
+  box-shadow: inset 0 0 0 2px var(--green);
+}
+
+.suggested-addons img,
+.upsell-grid img {
+  aspect-ratio: 1.4 / 1;
+  border-radius: 12px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.totals-card div {
+  display: flex;
+  justify-content: space-between;
+}
+
+.totals-card .grand {
+  border-top: 1px solid var(--border);
+  font-size: 1.18rem;
+  padding-top: 8px;
+}
+
+.sticky-checkout {
+  background: var(--green);
+  border: 0;
+  bottom: 84px;
+  box-shadow: 0 14px 32px rgba(32, 194, 103, 0.25);
+  color: white;
+  position: sticky;
+  width: 100%;
+  z-index: 10;
+}
+
+.detail-image {
+  aspect-ratio: 16 / 9;
+  border-radius: 20px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.info-row {
+  color: var(--muted);
+  display: grid;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+
+.option-group,
+.topping-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.option-group h3,
+.topping-editor h3,
+.checkout-section h3,
+.suggested-addons h2 {
+  margin: 0;
+}
+
+.option-group button,
+.topping-editor article {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  display: flex;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 0 12px;
+}
+
+.option-group button.active {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.topping-editor button {
+  background: var(--primary);
+  border: 0;
+  border-radius: 999px;
+  color: white;
+  font-weight: 900;
+  height: 32px;
+  width: 32px;
+}
+
+.modal-close,
+.sheet-back {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  justify-self: start;
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.auth-tabs {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.auth-tabs button,
+.google-button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  min-height: 46px;
+}
+
+.auth-tabs button.active {
+  background: var(--primary);
+  color: white;
+}
+
+.terms-line,
+.payment-card,
+.setting-row {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  display: flex;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 12px;
+}
+
+.payment-card.active {
+  border-color: var(--green);
+}
+
+.payment-card.disabled {
+  color: var(--muted);
+  opacity: 0.62;
+}
+
+.field-error,
+.minimum-alert {
+  color: var(--promo);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.offer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.offer-list article {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+}
+
+.offer-list button,
+.saved-vouchers button {
+  background: #e8f5ff;
+  border: 1px solid #cce7f7;
+  border-radius: 999px;
+  color: var(--primary);
+  font-weight: 900;
+  min-height: 38px;
+}
+
+.saved-vouchers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toast {
+  background: #111827;
+  border-radius: 999px;
+  bottom: 92px;
+  color: white;
+  font-weight: 900;
+  left: 50%;
+  padding: 12px 16px;
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: 120;
+}
+
+@media (min-width: 820px) {
+  .menu-page,
+  .cart-page,
+  .offers-page,
+  .more-page,
+  .account-page {
+    margin: 0 auto;
+    max-width: 980px;
+  }
+
+  .product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bottom-sheet {
+    justify-self: center;
+    max-width: 560px;
+    width: 100%;
+  }
+}
+
 /* Dark SaaS admin refinements */
 .admin-body {
   background:

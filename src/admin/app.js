@@ -13,14 +13,14 @@ const state = {
   sidebarCollapsed: false,
 };
 
-const orderStatuses = ["Confirmed", "Preparing", "Ready", "Completed"];
+const orderStatuses = ["confirmed", "preparing", "ready", "completed", "cancelled"];
 const nav = ["overview", "orders"];
 const mvpViews = new Set(["overview", "orders"]);
 
 function orders() {
   return read("orders").map((order) => ({
     ...order,
-    status: ["Received", "Accepted"].includes(order.status) ? "Confirmed" : order.status || "Confirmed",
+    status: ["Received", "Accepted", "Confirmed"].includes(order.status) ? "confirmed" : String(order.status || "confirmed").toLowerCase(),
   }));
 }
 
@@ -34,7 +34,7 @@ function analytics() {
   return {
     revenue,
     count: all.length,
-    open: all.filter((order) => order.status !== "Completed").length,
+    open: all.filter((order) => order.status !== "completed" && order.status !== "cancelled").length,
     average: all.length ? revenue / all.length : 0,
   };
 }
@@ -117,7 +117,7 @@ function renderOverview() {
       </section>
       <section class="admin-panel">
         <span>Recent orders</span><h2>Latest activity</h2>
-        <div class="compact-admin-list">${orders().slice(0, 5).map((order) => `<article><strong>${order.id}</strong><span>${order.customer} · ${order.status} · ${money(order.total)}</span></article>`).join("")}</div>
+        <div class="compact-admin-list">${orders().slice(0, 5).map((order) => `<article><strong>${order.id}</strong><span>${order.customer} · ${label(order.status)} · ${money(order.total)}</span></article>`).join("")}</div>
       </section>
     </section>
   `;
@@ -152,12 +152,12 @@ function renderOrders() {
         <div class="panel-heading"><div><span>Live incoming orders</span><h2>Kitchen queue</h2></div></div>
         <div class="admin-toolbar">
           <input type="search" placeholder="Search orders" value="${state.orderQuery}" data-order-search />
-          <select data-order-filter><option value="all">All statuses</option>${orderStatuses.map((status) => `<option ${state.orderFilter === status ? "selected" : ""}>${status}</option>`).join("")}</select>
+          <select data-order-filter><option value="all">All statuses</option>${orderStatuses.map((status) => `<option value="${status}" ${state.orderFilter === status ? "selected" : ""}>${label(status)}</option>`).join("")}</select>
         </div>
         <div class="order-kanban">
           ${orderStatuses.map((status) => `
             <div>
-              <h3>${status}</h3>
+              <h3>${label(status)}</h3>
               ${filteredOrders.filter((order) => order.status === status).map(renderOrderCard).join("") || `<p class="empty-admin">No orders</p>`}
             </div>
           `).join("")}
@@ -176,9 +176,10 @@ function renderOrderCard(order) {
       <small>${order.zone} · ${order.address || "Pickup"} · ${order.createdAt} · ${money(order.total)}</small>
       <small>${order.notes ? `Note: ${order.notes}` : "No customer notes"} · ${order.paymentMethod || "Card"}</small>
       <div class="order-actions">
-        <button data-order-action="Preparing" data-order-id="${order.id}" ${order.status === "Preparing" ? "disabled" : ""}>Preparing</button>
-        <button data-order-action="Ready" data-order-id="${order.id}" ${order.status === "Ready" ? "disabled" : ""}>Ready</button>
-        <button data-order-action="Completed" data-order-id="${order.id}" ${order.status === "Completed" ? "disabled" : ""}>Completed</button>
+        <button data-order-action="preparing" data-order-id="${order.id}" ${order.status === "preparing" ? "disabled" : ""}>Preparing</button>
+        <button data-order-action="ready" data-order-id="${order.id}" ${order.status === "ready" ? "disabled" : ""}>Ready</button>
+        <button data-order-action="completed" data-order-id="${order.id}" ${order.status === "completed" ? "disabled" : ""}>Completed</button>
+        <button data-order-action="cancelled" data-order-id="${order.id}" ${order.status === "cancelled" ? "disabled" : ""}>Cancel</button>
         <button data-print-order="${order.id}">Print</button>
       </div>
       <details><summary>Email history</summary>${(order.emailLogs || []).map((log) => `<small>${log.type} · ${log.status} · ${log.sentAt || ""}</small>`).join("") || "<small>No email logs yet</small>"}</details>

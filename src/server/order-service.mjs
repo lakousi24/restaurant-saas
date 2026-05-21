@@ -152,13 +152,18 @@ export async function updateOrderStatus(id, body = {}) {
   const status = sanitize(body.status);
   const order = sanitizeOrder(body.order || {});
   const nextOrder = { ...order, ...(memoryOrders.get(id) || {}), status };
-  const statusToEmail = {
-    Accepted: "accepted",
-    Preparing: "preparing",
-    Ready: "ready",
-    Rejected: "rejected",
-    Cancelled: "cancelled",
-  };
+    const statusToEmail = {
+      Accepted: "accepted",
+      Preparing: "preparing",
+      Ready: "ready",
+      Rejected: "rejected",
+      Cancelled: "cancelled",
+      accepted: "accepted",
+      preparing: "preparing",
+      ready: "ready",
+      rejected: "rejected",
+      cancelled: "cancelled",
+    };
   const emailType = statusToEmail[status];
 
   if (emailType && nextOrder.email) {
