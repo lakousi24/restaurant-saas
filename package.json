@@ -1,0 +1,14 @@
+{
+  "name": "giros-king-platform",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "build": "node scripts/build.mjs",
+    "check": "npm run build"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.16"
+  }
+}

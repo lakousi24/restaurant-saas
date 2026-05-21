@@ -1,0 +1,2 @@
+window.GIROS_SUPABASE_URL = "";
+window.GIROS_SUPABASE_ANON_KEY = "";
