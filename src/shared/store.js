@@ -12,6 +12,11 @@ const defaults = {
   cart: [],
   lastOrder: null,
   points: 460,
+  cookieConsent: false,
+  locationPreference: null,
+  fulfillmentChoice: "",
+  deliveryAddress: "",
+  pickupSchedule: null,
 };
 
 const key = (name) => `girosking:${name}`;

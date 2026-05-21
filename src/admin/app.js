@@ -13,12 +13,15 @@ const state = {
   sidebarCollapsed: false,
 };
 
-const orderStatuses = ["Received", "Accepted", "Preparing", "Ready", "Completed", "Rejected", "Cancelled"];
-const nav = ["overview", "orders", "menu", "categories", "delivery", "customers", "promotions", "analytics", "settings"];
+const orderStatuses = ["Confirmed", "Preparing", "Ready", "Completed"];
+const nav = ["overview", "orders"];
 const mvpViews = new Set(["overview", "orders"]);
 
 function orders() {
-  return read("orders");
+  return read("orders").map((order) => ({
+    ...order,
+    status: ["Received", "Accepted"].includes(order.status) ? "Confirmed" : order.status || "Confirmed",
+  }));
 }
 
 function products() {
@@ -64,7 +67,7 @@ function renderDashboard() {
         <a class="brand" href="/"><span class="brand-mark">GK</span><span><strong>Giros King</strong><small>Owner console</small></span></a>
         <button class="sidebar-toggle" data-admin-action="toggle-sidebar">Collapse</button>
         <nav>
-          ${nav.map((item) => `<button class="${state.view === item ? "active" : ""}" data-admin-view="${item}" ${mvpViews.has(item) ? "" : "disabled"}>${label(item)}</button>`).join("")}
+          ${nav.map((item) => `<button class="${state.view === item ? "active" : ""}" data-admin-view="${item}">${label(item)}</button>`).join("")}
         </nav>
         <button class="secondary-action full" data-admin-action="logout">Log out</button>
       </aside>
@@ -172,15 +175,10 @@ function renderOrderCard(order) {
       <p>${renderOrderItems(order)}</p>
       <small>${order.zone} · ${order.address || "Pickup"} · ${order.createdAt} · ${money(order.total)}</small>
       <small>${order.notes ? `Note: ${order.notes}` : "No customer notes"} · ${order.paymentMethod || "Card"}</small>
-      <select data-order-status="${order.id}">
-        ${orderStatuses.map((status) => `<option ${status === order.status ? "selected" : ""}>${status}</option>`).join("")}
-      </select>
       <div class="order-actions">
-        <button data-order-action="Accepted" data-order-id="${order.id}">Accept</button>
-        <button data-order-action="Preparing" data-order-id="${order.id}">Preparing</button>
-        <button data-order-action="Completed" data-order-id="${order.id}">Complete</button>
-        <button data-order-action="Rejected" data-order-id="${order.id}">Reject</button>
-        <button data-order-action="Ready" data-order-id="${order.id}">Ready</button>
+        <button data-order-action="Preparing" data-order-id="${order.id}" ${order.status === "Preparing" ? "disabled" : ""}>Preparing</button>
+        <button data-order-action="Ready" data-order-id="${order.id}" ${order.status === "Ready" ? "disabled" : ""}>Ready</button>
+        <button data-order-action="Completed" data-order-id="${order.id}" ${order.status === "Completed" ? "disabled" : ""}>Completed</button>
         <button data-print-order="${order.id}">Print</button>
       </div>
       <details><summary>Email history</summary>${(order.emailLogs || []).map((log) => `<small>${log.type} · ${log.status} · ${log.sentAt || ""}</small>`).join("") || "<small>No email logs yet</small>"}</details>
