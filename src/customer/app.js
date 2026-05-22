@@ -1,13 +1,23 @@
 import { createOrder } from "../shared/api.js";
 import { currentUser, saveDemoUser, validateAccount } from "../shared/auth-service.js";
-import { activeProducts, money, read, updateById, write } from "../shared/store.js";
+import { activeProducts, money, read, write } from "../shared/store.js";
 import { createOrderFromCart, newCartItem, pickupSlots, quoteDelivery, saveOrder, todayISO } from "../shared/order-service.js";
 import { getSupabaseStatus } from "../shared/supabase.js";
-import { email, required, sanitize, validateCheckout } from "../shared/validation.js";
+import { sanitize, validateCheckout } from "../shared/validation.js";
 
 const app = document.querySelector("#customerApp");
 const storeAddress = "Giros King, 24 Market Street";
 const paymentMethods = ["Cash", "PayPal", "Apple Pay", "Card", "Klarna"];
+const icons = {
+  account: `<svg viewBox="0 0 24 24"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="8" r="4"/></svg>`,
+  back: `<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>`,
+  cart: `<svg viewBox="0 0 24 24"><path d="M6 6h15l-2 8H8L6 3H3"/><circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>`,
+  delivery: `<svg viewBox="0 0 24 24"><path d="M3 7h11v10H3z"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg>`,
+  menu: `<svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>`,
+  more: `<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>`,
+  offers: `<svg viewBox="0 0 24 24"><path d="M20 12v8H4v-8"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H8.5a2.5 2.5 0 1 1 2.2-3.7L12 7z"/><path d="M12 7h3.5a2.5 2.5 0 1 0-2.2-3.7L12 7z"/></svg>`,
+  pickup: `<svg viewBox="0 0 24 24"><path d="M5 11h14l-1 10H6z"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/><path d="M3 11h18"/></svg>`,
+};
 const toppingOptions = [
   { id: "mozzarella", name: "Mozzarella", price: 0, included: true },
   { id: "tomato", name: "Tomato", price: 0, included: true },
@@ -46,6 +56,10 @@ const t = {
   en: { start: "Start Your Order", delivery: "Delivery", pickup: "Pickup", rewards: "Rewards Club", account: "Account", language: "Language" },
   de: { start: "Bestellung starten", delivery: "Lieferung", pickup: "Abholung", rewards: "Rewards Club", account: "Konto", language: "Sprache" },
 };
+
+function icon(name) {
+  return `<span class="nav-icon" aria-hidden="true">${icons[name] || ""}</span>`;
+}
 
 function cart() {
   return read("cart");
@@ -113,12 +127,12 @@ function renderTopbar() {
   const ctx = context();
   return `
     <header class="app-topbar">
-      <button class="icon-button" data-action="start-over" aria-label="Back">Back</button>
+      <button class="icon-button" data-action="start-over" aria-label="Back">${icon("back")}<span class="sr-only">Back</span></button>
       <div class="order-context">
         <strong>${ctx ? `${ctx.type === "delivery" ? "Delivery" : "Pickup"} ${ctx.time} ${ctx.date}` : "Giros King"}</strong>
         <span>${ctx ? (ctx.type === "delivery" ? ctx.address : storeAddress) : "Start your order"}</span>
       </div>
-      <button class="icon-button account-fab" data-page="account" aria-label="Account">Account</button>
+      <button class="icon-button account-fab" data-page="account" aria-label="Account">${icon("account")}<span class="sr-only">Account</span></button>
     </header>
   `;
 }
@@ -142,6 +156,7 @@ function renderMenuPage() {
       <div class="search-shell">
         <input type="search" placeholder="Search pizza, pasta, drinks..." value="${state.query}" data-search />
       </div>
+      ${renderRecentSearches()}
       <nav class="category-tabs">
         ${categories().map((category) => `<button class="${state.category === category.id ? "active" : ""}" data-category="${category.id}">${category.name}</button>`).join("")}
       </nav>
@@ -170,6 +185,12 @@ function renderPromoCarousel() {
 function renderProductGrid() {
   const list = products();
   return list.length ? list.map(renderProductCard).join("") : `<div class="empty-state clean">No products found.</div>`;
+}
+
+function renderRecentSearches() {
+  const terms = read("recentSearches").map((term) => sanitize(term).replace(/["']/g, "").slice(0, 40)).filter(Boolean).slice(0, 4);
+  if (!terms.length) return "";
+  return `<div class="recent-searches"><span>Recent</span>${terms.map((term) => `<button data-recent-search="${term}">${term}</button>`).join("")}</div>`;
 }
 
 function renderProductCard(product) {
@@ -281,26 +302,32 @@ function renderMorePage() {
 }
 
 function renderAccountPage() {
+  const orders = read("orders").filter((order) => !state.user || order.email === state.user.email).slice(0, 4);
+  const addresses = [read("deliveryAddress")].filter(Boolean);
   return `
     <section class="account-page">
       <h1>Account</h1>
-      ${state.user ? `<article class="account-card"><strong>${state.user.name}</strong><span>${state.user.email}</span><span>${state.user.phone}</span><button data-action="logout">Log out</button></article>` : `<button class="primary-action full" data-sheet="account">Login, sign up, or continue as guest</button>`}
+      ${state.user ? `<article class="account-card profile-card"><strong>${state.user.name}</strong><span>${state.user.email}</span><span>${state.user.phone}</span><button data-action="logout">Log out</button></article>` : `<button class="primary-action full" data-sheet="account">Login, sign up, or continue as guest</button>`}
       <section class="reward-card"><strong>Rewards Club</strong><span>${state.user?.rewards ? "Joined" : "Join during sign up"}</span></section>
+      <section class="account-stack"><h2>Order history</h2>${orders.length ? orders.map((order) => `<article><strong>${order.id}</strong><span>${order.fulfillment} · ${order.status} · ${money(order.total)}</span></article>`).join("") : `<p>No orders yet.</p>`}</section>
+      <section class="account-stack"><h2>Saved addresses</h2>${addresses.length ? addresses.map((address) => `<article><strong>Delivery</strong><span>${address}</span></article>`).join("") : `<p>No saved addresses yet.</p>`}</section>
+      <section class="account-stack"><h2>Payment methods</h2><article><strong>Cash</strong><span>Active for MVP</span></article><article class="disabled-row"><strong>Card</strong><span>Coming soon</span></article></section>
+      <section class="account-stack"><h2>Favorite orders</h2><p>Favorite orders will appear here after reorder support is connected.</p></section>
     </section>
   `;
 }
 
 function renderBottomNav() {
   const items = [
-    ["account", "AC", "Account"],
-    ["more", "MO", "More"],
-    ["menu", "MN", "Menu"],
-    ["offers", "OF", "Offers"],
-    ["cart", "CT", "Cart"],
+    ["account", "account", "Account"],
+    ["more", "more", "More"],
+    ["menu", "menu", "Menu"],
+    ["offers", "offers", "Offers"],
+    ["cart", "cart", "Cart"],
   ];
   return `
     <nav class="mobile-bottom-nav">
-      ${items.map(([page, icon, label]) => `<button class="${state.page === page ? "active" : ""}" data-page="${page}"><span>${icon}</span>${label}${page === "cart" && cartCount() ? `<b>${cartCount()}</b>` : ""}</button>`).join("")}
+      ${items.map(([page, iconName, label]) => `<button class="${state.page === page ? "active" : ""}" data-page="${page}">${icon(iconName)}<span class="nav-label">${label}</span>${page === "cart" && cartCount() ? `<b>${cartCount()}</b>` : ""}</button>`).join("")}
     </nav>
   `;
 }
@@ -361,8 +388,8 @@ function renderStartSheet() {
   const lang = t[state.language] || t.en;
   return sheet(`
     <h2>${lang.start}</h2>
-    <button class="start-button delivery" data-sheet="delivery">${lang.delivery}</button>
-    <button class="start-button pickup" data-sheet="pickup">${lang.pickup}</button>
+    <button class="start-button delivery" data-sheet="delivery">${icon("delivery")}<span>${lang.delivery}</span><small>Bring it to my door</small></button>
+    <button class="start-button pickup" data-sheet="pickup">${icon("pickup")}<span>${lang.pickup}</span><small>Collect from Giros King</small></button>
     <section class="rewards-mini"><strong>${lang.rewards}</strong><span>Save details and vouchers locally for this MVP.</span></section>
     <div class="start-shortcuts">
       <button data-sheet="language">${lang.language}</button>
@@ -708,6 +735,10 @@ app.addEventListener("click", (event) => {
     addUpsell(event.target.closest("[data-add-upsell]").dataset.addUpsell);
     render();
   }
+  if (event.target.closest("[data-recent-search]")) {
+    state.query = event.target.closest("[data-recent-search]").dataset.recentSearch;
+    render();
+  }
   if (action === "checkout") continueToCheckout();
   if (action === "close-minimum") {
     state.minOrderOpen = false;
@@ -757,6 +788,8 @@ app.addEventListener("click", (event) => {
 app.addEventListener("input", (event) => {
   if (event.target.matches("[data-search]")) {
     state.query = event.target.value;
+    const term = sanitize(state.query).replace(/["']/g, "").slice(0, 40);
+    if (term.length > 2) write("recentSearches", [term, ...read("recentSearches").filter((item) => item !== term)].slice(0, 6));
     window.clearTimeout(state.searchTimer);
     state.searchTimer = window.setTimeout(updateProductGrid, 120);
   }

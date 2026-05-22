@@ -170,7 +170,7 @@ function renderOrders() {
 function renderOrderCard(order) {
   return `
     <article class="admin-order-card">
-      <strong>${order.id}</strong>
+      <div class="order-card-head"><strong>${order.id}</strong><span class="status-badge ${order.status}">${label(order.status)}</span></div>
       <span>${order.customer} · ${order.phone || "No phone"} · ${order.fulfillment}</span>
       <p>${renderOrderItems(order)}</p>
       <small>${order.zone} · ${order.address || "Pickup"} · ${order.createdAt} · ${money(order.total)}</small>

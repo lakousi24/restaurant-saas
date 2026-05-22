@@ -1,7 +1,7 @@
 import { categories, deliveryZones, demoCustomers, demoOrders, offerBanners, products, promotions, settings, upsellProducts } from "./data.js";
 
 const defaults = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   categories,
   products,
   offerBanners,
@@ -21,6 +21,7 @@ const defaults = {
   deliveryAddress: "",
   pickupSchedule: null,
   savedVouchers: [],
+  recentSearches: [],
   orderContext: null,
   language: "en",
 };
