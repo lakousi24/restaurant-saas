@@ -249,9 +249,9 @@ export const sauces = [
 ];
 
 export const deliveryZones = [
-  { id: "zone-1", name: "Central", area: "0-2 km", fee: 2.99, eta: "22-30 min" },
-  { id: "zone-2", name: "Midtown", area: "2-5 km", fee: 4.99, eta: "30-42 min" },
-  { id: "zone-3", name: "Outer ring", area: "5-8 km", fee: 7.99, eta: "42-55 min" },
+  { id: "zone-1", name: "Central", area: "0-3 km", fee: 2.99, eta: "22-30 min" },
+  { id: "zone-2", name: "Midtown", area: "3-6 km", fee: 4.99, eta: "30-42 min" },
+  { id: "zone-3", name: "Outer ring", area: "6-10 km", fee: 7.99, eta: "42-55 min" },
 ];
 
 export const promotions = [

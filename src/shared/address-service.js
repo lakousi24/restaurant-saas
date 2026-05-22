@@ -8,9 +8,9 @@ export const RESTAURANT_LOCATION = {
 };
 
 const DELIVERY_BANDS = [
-  { maxKm: 2, fee: 2.99, eta: "22-30 min", label: "0-2 km" },
-  { maxKm: 5, fee: 4.99, eta: "30-42 min", label: "2-5 km" },
-  { maxKm: 8, fee: 7.99, eta: "42-55 min", label: "5-8 km" },
+  { maxKm: 3, fee: 2.99, eta: "22-30 min", label: "0-3 km" },
+  { maxKm: 6, fee: 4.99, eta: "30-42 min", label: "3-6 km" },
+  { maxKm: 10, fee: 7.99, eta: "42-55 min", label: "6-10 km" },
 ];
 
 let googleMapsPromise = null;
@@ -77,50 +77,92 @@ export async function attachPlacesAutocomplete(input, onSelect) {
       east: center.lng + 0.14,
       west: center.lng - 0.14,
     },
-    fields: ["address_components", "formatted_address", "geometry", "place_id", "name"],
+    fields: ["address_components", "formatted_address", "geometry", "place_id", "name", "types", "url"],
     strictBounds: false,
     types: ["address"],
   };
 
   const autocomplete = new google.maps.places.Autocomplete(input, options);
-  autocomplete.addListener("place_changed", () => {
-    const address = parseGooglePlace(autocomplete.getPlace());
+  autocomplete.addListener("place_changed", async () => {
+    const selectedPlace = autocomplete.getPlace();
+    const place = selectedPlace?.place_id ? await getPlaceDetails(selectedPlace.place_id, selectedPlace) : selectedPlace;
+    const address = parseGooglePlace(place);
     if (address) onSelect(address);
   });
   return autocomplete;
 }
 
-export function parseGooglePlace(place) {
-  if (!place?.geometry?.location) return null;
-  const components = {};
-  (place.address_components || []).forEach((component) => {
-    component.types.forEach((type) => {
-      components[type] = component;
+function getPlaceDetails(placeId, fallbackPlace) {
+  if (!window.google?.maps?.places || !placeId) return Promise.resolve(fallbackPlace);
+  const service = new window.google.maps.places.PlacesService(document.createElement("div"));
+  const fields = ["address_components", "formatted_address", "geometry", "place_id", "name", "types", "url"];
+  return new Promise((resolve) => {
+    service.getDetails({ placeId, fields }, (place, status) => {
+      const ok = status === window.google.maps.places.PlacesServiceStatus.OK;
+      resolve(ok && place ? place : fallbackPlace);
     });
   });
+}
 
+export function parseGooglePlace(place) {
+  if (!place?.geometry?.location) return null;
+  const components = componentMap(place.address_components || []);
   const street = components.route?.long_name || components.route?.short_name || "";
   const houseNumber = components.street_number?.long_name || "";
   const city =
     components.locality?.long_name ||
+    components.sublocality?.long_name ||
     components.postal_town?.long_name ||
     components.administrative_area_level_2?.long_name ||
     "";
   const postcode = components.postal_code?.long_name || "";
   const country = components.country?.long_name || "";
+  const state = components.administrative_area_level_1?.long_name || "";
+  const addressLine = [street, houseNumber].filter(Boolean).join(" ");
 
   return normalizeAddress({
     source: "google",
     placeId: place.place_id || "",
-    formattedAddress: place.formatted_address || [street, houseNumber, postcode, city].filter(Boolean).join(" "),
+    formattedAddress: place.formatted_address || [addressLine, postcode, city].filter(Boolean).join(", "),
+    addressLine,
     street,
     houseNumber,
     city,
     postcode,
     country,
+    state,
     latitude: Number(place.geometry.location.lat()),
     longitude: Number(place.geometry.location.lng()),
+    place: serializePlace(place),
   });
+}
+
+function componentMap(addressComponents) {
+  return addressComponents.reduce((map, component) => {
+    component.types.forEach((type) => {
+      map[type] = component;
+    });
+    return map;
+  }, {});
+}
+
+function serializePlace(place) {
+  return {
+    placeId: sanitize(place.place_id),
+    name: sanitize(place.name),
+    formattedAddress: sanitize(place.formatted_address),
+    types: Array.isArray(place.types) ? place.types.map(sanitize) : [],
+    url: sanitize(place.url),
+    addressComponents: (place.address_components || []).map((component) => ({
+      longName: sanitize(component.long_name),
+      shortName: sanitize(component.short_name),
+      types: component.types || [],
+    })),
+    location: {
+      latitude: Number(place.geometry?.location?.lat?.() || 0),
+      longitude: Number(place.geometry?.location?.lng?.() || 0),
+    },
+  };
 }
 
 export function createManualAddress(value) {
@@ -139,11 +181,12 @@ export function createManualAddress(value) {
   return normalizeAddress({
     source: "manual-demo",
     formattedAddress: input,
+    addressLine: [street, houseNumber].filter(Boolean).join(" "),
     street,
     houseNumber,
-    city: "Berlin",
+    city: "",
     postcode,
-    country: "Germany",
+    country: "",
     latitude,
     longitude: base.longitude,
   });
@@ -151,7 +194,7 @@ export function createManualAddress(value) {
 
 function demoDistanceForAddress(value, postcode) {
   const text = value.toLowerCase();
-  if (text.includes("outside") || postcode.startsWith("99")) return 9.4;
+  if (text.includes("outside") || postcode.startsWith("99")) return 12.4;
   if (text.includes("outer") || text.includes("ring") || postcode.startsWith("11")) return 6.2;
   if (text.includes("midtown") || postcode.startsWith("10")) return 3.4;
   return 1.2;
@@ -160,14 +203,17 @@ function demoDistanceForAddress(value, postcode) {
 function normalizeAddress(address) {
   return {
     formattedAddress: sanitize(address.formattedAddress),
+    addressLine: sanitize(address.addressLine || [address.street, address.houseNumber].filter(Boolean).join(" ")),
     street: sanitize(address.street),
     houseNumber: sanitize(address.houseNumber),
     city: sanitize(address.city),
     postcode: sanitize(address.postcode),
     country: sanitize(address.country),
+    state: sanitize(address.state),
     latitude: Number(address.latitude || 0),
     longitude: Number(address.longitude || 0),
     placeId: sanitize(address.placeId),
+    place: address.place || null,
     source: address.source || "manual-demo",
   };
 }
@@ -201,6 +247,30 @@ function unavailableQuote(distanceKm = null) {
     distanceKm,
     message: "Sorry, we do not deliver to this address yet.",
   };
+}
+
+export function isSameSelectedPlace(address, input) {
+  if (!address || !input) return false;
+  const normalizedInput = normalizeGermanText(input);
+  return [
+    address.formattedAddress,
+    address.addressLine,
+    `${address.addressLine} ${address.postcode} ${address.city}`,
+    `${address.street} ${address.houseNumber} ${address.city}`,
+  ].some((candidate) => normalizeGermanText(candidate) === normalizedInput || normalizeGermanText(candidate).includes(normalizedInput));
+}
+
+export function normalizeGermanText(value) {
+  return sanitize(value)
+    .toLowerCase()
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function distanceKmBetween(origin, destination) {

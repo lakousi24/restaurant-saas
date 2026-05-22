@@ -1,7 +1,7 @@
 import { categories, deliveryZones, demoCustomers, demoOrders, offerBanners, products, promotions, settings, upsellProducts } from "./data.js";
 
 const defaults = {
-  schemaVersion: 6,
+  schemaVersion: 8,
   categories,
   products,
   offerBanners,
@@ -46,7 +46,13 @@ export function write(name, value) {
 export function ensureSeedData() {
   const version = read("schemaVersion");
   if (version !== defaults.schemaVersion) {
+    const currentContext = read("orderContext");
+    const currentSelectedAddress = read("selectedAddress");
+    const hasGoogleAddress = currentSelectedAddress?.source === "google";
     ["categories", "products", "offerBanners", "upsellProducts", "deliveryZones", "promotions", "settings"].forEach((name) => write(name, structuredClone(defaults[name])));
+    write("selectedAddress", hasGoogleAddress ? currentSelectedAddress : null);
+    write("deliveryAddress", hasGoogleAddress ? currentSelectedAddress.formattedAddress : "");
+    if (currentContext?.type === "delivery" && currentContext.addressDetails?.source !== "google") write("orderContext", null);
     write("schemaVersion", defaults.schemaVersion);
   }
   Object.entries(defaults).forEach(([name, value]) => {

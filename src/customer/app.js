@@ -1,5 +1,5 @@
 import { createOrder } from "../shared/api.js";
-import { attachPlacesAutocomplete, createManualAddress, hasGoogleMapsApiKey, mapPreviewUrl, quoteDelivery } from "../shared/address-service.js";
+import { attachPlacesAutocomplete, createManualAddress, hasGoogleMapsApiKey, isSameSelectedPlace, mapPreviewUrl, quoteDelivery } from "../shared/address-service.js";
 import { currentUser, saveDemoUser, validateAccount } from "../shared/auth-service.js";
 import { activeProducts, money, read, write } from "../shared/store.js";
 import { createOrderFromCart, newCartItem, pickupSlots, saveOrder, todayISO } from "../shared/order-service.js";
@@ -29,6 +29,12 @@ const toppingOptions = [
   { id: "chicken", name: "Chicken", price: 2.5 },
 ];
 
+function usableStoredAddress(address) {
+  if (!address) return null;
+  if (!hasGoogleMapsApiKey()) return address;
+  return address.source === "google" && address.placeId && address.latitude && address.longitude ? address : null;
+}
+
 const state = {
   page: "menu",
   category: "pizza",
@@ -50,7 +56,7 @@ const state = {
   toast: "",
   user: currentUser(),
   orderContext: read("orderContext"),
-  selectedAddress: read("selectedAddress"),
+  selectedAddress: usableStoredAddress(read("selectedAddress")),
   mapsStatus: hasGoogleMapsApiKey() ? "Google Places ready" : "Manual address fallback",
   voucherCode: "",
   appliedVoucher: read("appliedVoucher"),
@@ -81,6 +87,10 @@ function categories() {
 
 function context() {
   return state.orderContext || read("orderContext");
+}
+
+function currentSelectedAddress() {
+  return usableStoredAddress(state.selectedAddress || read("selectedAddress"));
 }
 
 function subtotal() {
@@ -449,14 +459,14 @@ function renderStartSheet() {
 }
 
 function renderDeliveryFlow() {
-  const savedAddress = state.selectedAddress || read("selectedAddress");
+  const savedAddress = currentSelectedAddress();
   const address = savedAddress?.formattedAddress || read("deliveryAddress") || "";
-  const quote = savedAddress ? quoteDelivery(savedAddress, subtotal()) : address ? quoteDelivery(address, subtotal()) : null;
+  const quote = savedAddress ? quoteDelivery(savedAddress, subtotal()) : !hasGoogleMapsApiKey() && address ? quoteDelivery(address, subtotal()) : null;
   return sheet("Delivery", `
     <form id="deliveryFlowForm">
       <label class="field">Address search<input name="address" placeholder="Start typing your address here..." value="${address}" required data-address-input autocomplete="street-address" /></label>
       <small class="helper-copy address-provider" data-address-provider>${state.mapsStatus}. ${hasGoogleMapsApiKey() ? "Select a Google suggestion for exact delivery pricing." : "Add a postcode for demo delivery pricing."}</small>
-      <section class="address-section"><span>Current</span>${savedAddress ? renderSelectedAddressCard(savedAddress, quote) : address ? `<article class="address-card">${address}<small>${quote?.message || ""}</small></article>` : `<p>No saved address yet.</p>`}</section>
+      <section class="address-section"><span>Current</span>${savedAddress ? renderSelectedAddressCard(savedAddress, quote) : address ? `<article class="address-card">${address}<small>${hasGoogleMapsApiKey() ? "Select a Google suggestion to confirm city and delivery distance." : quote?.message || ""}</small></article>` : `<p>No saved address yet.</p>`}</section>
       ${address && quote && !quote.available ? `<div class="minimum-alert">${quote.message}</div>` : ""}
       <label class="field">Delivery date<select name="date">${[0, 1, 2, 3].map((offset) => `<option value="${todayISO(offset)}">${offset === 0 ? "Today" : offset === 1 ? "Tomorrow" : todayISO(offset)}</option>`).join("")}</select></label>
       <label class="field">Delivery time<select name="time">${pickupSlots().map((slot) => `<option>${slot}</option>`).join("")}</select></label>
@@ -470,8 +480,8 @@ function renderSelectedAddressCard(address, quote = quoteDelivery(address, subto
   return `
     <article class="address-card selected-address-card">
       <strong>${address.formattedAddress}</strong>
-      <span>${[address.postcode, address.city].filter(Boolean).join(" ") || "Postcode/city not detected"}</span>
-      <small>${quote.message}</small>
+      <span>${[address.addressLine, [address.postcode, address.city].filter(Boolean).join(" ")].filter(Boolean).join(" · ") || "Postcode/city not detected"}</span>
+      <small>${quote.available ? `${quote.distanceKm.toFixed(1)} km · ${money(quote.fee)} delivery fee` : quote.message}</small>
     </article>
   `;
 }
@@ -496,9 +506,10 @@ function renderAddressConfirm() {
     <p>Please confirm your delivery address.</p>
     <article class="address-card address-confirm-card">
       <strong>${address.formattedAddress}</strong>
+      <span>${address.addressLine}</span>
       <span>${[address.postcode, address.city].filter(Boolean).join(" ")}</span>
       ${renderMapPreview(address)}
-      <small>${quote.message}</small>
+      <small>${quote.available ? `${quote.distanceKm.toFixed(1)} km from Giros King · Delivery fee ${money(quote.fee)}` : quote.message}</small>
     </article>
     <button class="secondary-action full" data-sheet="delivery">Edit address</button>
     <button class="primary-action full" data-action="confirm-delivery-start">Confirm address</button>
@@ -602,9 +613,10 @@ function renderCheckoutAddressConfirm() {
     <p>Please confirm your delivery address.</p>
     <article class="address-card address-confirm-card">
       <strong>${address.formattedAddress}</strong>
+      <span>${address.addressLine}</span>
       <span>${[address.postcode, address.city].filter(Boolean).join(" ")}</span>
       ${renderMapPreview(address)}
-      <small>${quote.message}</small>
+      <small>${quote.available ? `${quote.distanceKm.toFixed(1)} km from Giros King · Delivery fee ${money(quote.fee)}` : quote.message}</small>
     </article>
     <button class="secondary-action full" data-action="edit-checkout-address">Edit address</button>
     <button class="primary-action full" data-action="place-confirmed-order">Confirm and place order</button>
@@ -684,10 +696,15 @@ function handleAddressSelected(address) {
   const quote = quoteDelivery(address, subtotal());
   const selectedAddress = { ...address, delivery: quote };
   state.selectedAddress = selectedAddress;
+  state.mapsStatus = "Google place selected";
   write("selectedAddress", selectedAddress);
   write("deliveryAddress", selectedAddress.formattedAddress);
   if (!quote.available) showToast(quote.message);
   render();
+}
+
+function canUseManualAddressFallback() {
+  return !hasGoogleMapsApiKey() || state.mapsStatus.includes("unavailable");
 }
 
 function acceptRequiredCookiesAndContinue() {
@@ -1054,7 +1071,10 @@ app.addEventListener("input", (event) => {
   if (event.target.matches("[data-product-notes]") && state.productConfig) state.productConfig.notes = event.target.value;
   if (event.target.matches("[data-address-input]")) {
     const value = sanitize(event.target.value);
-    if (state.selectedAddress?.formattedAddress !== value) state.selectedAddress = null;
+    if (!isSameSelectedPlace(state.selectedAddress, value)) {
+      state.selectedAddress = null;
+      write("selectedAddress", null);
+    }
     write("deliveryAddress", value);
   }
   if (event.target.matches("[data-account-field]")) {
@@ -1071,17 +1091,23 @@ app.addEventListener("submit", (event) => {
   if (event.target.id === "deliveryFlowForm") {
     const data = new FormData(event.target);
     const rawAddress = sanitize(data.get("address"));
-    const selected = state.selectedAddress?.formattedAddress === rawAddress ? state.selectedAddress : createManualAddress(rawAddress);
-    const quote = quoteDelivery(selected, subtotal());
-    const address = selected.formattedAddress;
-    state.selectedAddress = { ...selected, delivery: quote };
+    const currentAddress = currentSelectedAddress();
+    const selected = isSameSelectedPlace(currentAddress, rawAddress) ? currentAddress : null;
+    if (!selected && !canUseManualAddressFallback()) {
+      showToast("Please select an address from the Google suggestions.");
+      return;
+    }
+    const resolvedAddress = selected || createManualAddress(rawAddress);
+    const quote = quoteDelivery(resolvedAddress, subtotal());
+    const address = resolvedAddress.formattedAddress;
+    state.selectedAddress = { ...resolvedAddress, delivery: quote };
     write("selectedAddress", state.selectedAddress);
     write("deliveryAddress", address);
     if (!quote.available) return showToast(quote.message);
     state.pendingCheckout = {
       type: "delivery",
       address,
-      addressDetails: selected,
+      addressDetails: resolvedAddress,
       deliveryFee: quote.fee,
       distanceKm: quote.distanceKm,
       deliveryZone: quote.area,
