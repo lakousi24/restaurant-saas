@@ -1,7 +1,8 @@
 import { createOrder } from "../shared/api.js";
+import { attachPlacesAutocomplete, createManualAddress, hasGoogleMapsApiKey, mapPreviewUrl, quoteDelivery } from "../shared/address-service.js";
 import { currentUser, saveDemoUser, validateAccount } from "../shared/auth-service.js";
 import { activeProducts, money, read, write } from "../shared/store.js";
-import { createOrderFromCart, newCartItem, pickupSlots, quoteDelivery, saveOrder, todayISO } from "../shared/order-service.js";
+import { createOrderFromCart, newCartItem, pickupSlots, saveOrder, todayISO } from "../shared/order-service.js";
 import { getSupabaseStatus } from "../shared/supabase.js";
 import { sanitize, validateCheckout } from "../shared/validation.js";
 
@@ -12,6 +13,7 @@ const icons = {
   account: `<svg viewBox="0 0 24 24"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="8" r="4"/></svg>`,
   back: `<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>`,
   cart: `<svg viewBox="0 0 24 24"><path d="M6 6h15l-2 8H8L6 3H3"/><circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>`,
+  close: `<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`,
   delivery: `<svg viewBox="0 0 24 24"><path d="M3 7h11v10H3z"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg>`,
   menu: `<svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>`,
   more: `<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>`,
@@ -39,6 +41,7 @@ const state = {
   sheet: !read("cookieDecision") ? "cookies" : read("locationPreference") ? null : "location",
   startMode: "",
   authMode: "guest",
+  accountDraft: currentUser() || {},
   accountErrors: {},
   checkoutErrors: {},
   minOrderOpen: false,
@@ -47,9 +50,12 @@ const state = {
   toast: "",
   user: currentUser(),
   orderContext: read("orderContext"),
+  selectedAddress: read("selectedAddress"),
+  mapsStatus: hasGoogleMapsApiKey() ? "Google Places ready" : "Manual address fallback",
   voucherCode: "",
   appliedVoucher: read("appliedVoucher"),
   language: read("language") || "en",
+  startDismissed: false,
 };
 
 const t = {
@@ -83,7 +89,7 @@ function subtotal() {
 
 function delivery() {
   const ctx = context();
-  return ctx?.type === "delivery" ? quoteDelivery(ctx.address, subtotal()) : { available: true, fee: 0, area: "Pickup", eta: "" };
+  return ctx?.type === "delivery" ? quoteDelivery(ctx.addressDetails || ctx.address, subtotal()) : { available: true, fee: 0, area: "Pickup", eta: "" };
 }
 
 function discount() {
@@ -110,23 +116,41 @@ function products() {
 }
 
 function render() {
+  const overlayOpen = hasOpenOverlay();
   app.innerHTML = `
     <div class="customer-shell dominos-inspired">
-      ${renderTopbar()}
-      <main class="${context() ? "" : "menu-blurred"}">
+      ${renderTopbar(overlayOpen)}
+      <main ${overlayAttrs(overlayOpen)} class="${context() || state.startDismissed ? "" : "menu-blurred"}">
         ${renderPage()}
       </main>
-      ${renderBottomNav()}
+      ${renderBottomNav(overlayOpen)}
       ${renderSheets()}
       <div class="toast-host">${state.toast ? `<div class="toast">${state.toast}</div>` : ""}</div>
     </div>
   `;
+  document.body.classList.toggle("modal-open", overlayOpen);
+  afterRender();
 }
 
-function renderTopbar() {
+function overlayAttrs(active) {
+  return active ? `aria-hidden="true" inert` : "";
+}
+
+function hasOpenOverlay() {
+  return Boolean(
+    state.sheet ||
+    state.selectedProduct ||
+    state.upsellOpen ||
+    state.minOrderOpen ||
+    state.addressConfirmOpen ||
+    (!context() && !state.startDismissed),
+  );
+}
+
+function renderTopbar(overlayOpen = false) {
   const ctx = context();
   return `
-    <header class="app-topbar">
+    <header class="app-topbar" ${overlayAttrs(overlayOpen)}>
       <button class="icon-button" data-action="start-over" aria-label="Back">${icon("back")}<span class="sr-only">Back</span></button>
       <div class="order-context">
         <strong>${ctx ? `${ctx.type === "delivery" ? "Delivery" : "Pickup"} ${ctx.time} ${ctx.date}` : "Giros King"}</strong>
@@ -134,6 +158,16 @@ function renderTopbar() {
       </div>
       <button class="icon-button account-fab" data-page="account" aria-label="Account">${icon("account")}<span class="sr-only">Account</span></button>
     </header>
+  `;
+}
+
+function renderPageHeader(title, closeLabel = "Close") {
+  return `
+    <div class="screen-flow-header">
+      <button class="sheet-icon-button" data-action="page-back" aria-label="Go back">${icon("back")}</button>
+      <h1>${title}</h1>
+      <button class="sheet-icon-button" data-action="page-close" aria-label="${closeLabel}">${icon("close")}</button>
+    </div>
   `;
 }
 
@@ -215,7 +249,7 @@ function renderCartPage() {
   const canCheckout = context()?.type === "pickup" || missing <= 0;
   return `
     <section class="cart-page">
-      <h1>Cart</h1>
+      ${renderPageHeader("Cart", "Close cart")}
       ${renderVoucherBox()}
       <div class="cart-lines">
         ${cart().length ? cart().map(renderCartItem).join("") : `<div class="empty-state clean">Your cart is empty.</div>`}
@@ -277,7 +311,7 @@ function renderOffersPage() {
   const promos = read("promotions").filter((promo) => promo.active);
   return `
     <section class="offers-page">
-      <h1>Offers</h1>
+      ${renderPageHeader("Offers", "Close offers")}
       ${renderVoucherBox()}
       <h2>Available offers</h2>
       <div class="offer-list">${promos.map((promo) => `<article><strong>${promo.code}</strong><span>${promo.label || "Voucher"}</span><small>Minimum ${money(promo.minimumOrder || 0)} · expires ${promo.expiresAt || "not set"}</small><button data-save-voucher="${promo.id}">Save voucher</button></article>`).join("")}</div>
@@ -289,7 +323,7 @@ function renderOffersPage() {
 function renderMorePage() {
   return `
     <section class="more-page">
-      <h1>More</h1>
+      ${renderPageHeader("More", "Close more menu")}
       <button data-sheet="language">Language</button>
       <button data-sheet="cookie-settings">Cookie Settings</button>
       <article><strong>Terms & Conditions</strong><span>Prepared for legal content.</span></article>
@@ -306,7 +340,7 @@ function renderAccountPage() {
   const addresses = [read("deliveryAddress")].filter(Boolean);
   return `
     <section class="account-page">
-      <h1>Account</h1>
+      ${renderPageHeader("Account", "Close account")}
       ${state.user ? `<article class="account-card profile-card"><strong>${state.user.name}</strong><span>${state.user.email}</span><span>${state.user.phone}</span><button data-action="logout">Log out</button></article>` : `<button class="primary-action full" data-sheet="account">Login, sign up, or continue as guest</button>`}
       <section class="reward-card"><strong>Rewards Club</strong><span>${state.user?.rewards ? "Joined" : "Join during sign up"}</span></section>
       <section class="account-stack"><h2>Order history</h2>${orders.length ? orders.map((order) => `<article><strong>${order.id}</strong><span>${order.fulfillment} · ${order.status} · ${money(order.total)}</span></article>`).join("") : `<p>No orders yet.</p>`}</section>
@@ -317,7 +351,7 @@ function renderAccountPage() {
   `;
 }
 
-function renderBottomNav() {
+function renderBottomNav(overlayOpen = false) {
   const items = [
     ["account", "account", "Account"],
     ["more", "more", "More"],
@@ -326,7 +360,7 @@ function renderBottomNav() {
     ["cart", "cart", "Cart"],
   ];
   return `
-    <nav class="mobile-bottom-nav">
+    <nav class="mobile-bottom-nav" ${overlayAttrs(overlayOpen)}>
       ${items.map(([page, iconName, label]) => `<button class="${state.page === page ? "active" : ""}" data-page="${page}">${icon(iconName)}<span class="nav-label">${label}</span>${page === "cart" && cartCount() ? `<b>${cartCount()}</b>` : ""}</button>`).join("")}
     </nav>
   `;
@@ -337,7 +371,7 @@ function renderSheets() {
     ${state.sheet === "cookies" ? renderCookieSheet() : ""}
     ${state.sheet === "cookie-settings" ? renderCookieSettings() : ""}
     ${state.sheet === "location" ? renderLocationSheet() : ""}
-    ${!context() && !state.sheet ? renderStartSheet() : ""}
+    ${!context() && !state.sheet && !state.startDismissed ? renderStartSheet() : ""}
     ${state.sheet === "delivery" ? renderDeliveryFlow() : ""}
     ${state.sheet === "pickup" ? renderPickupFlow() : ""}
     ${state.sheet === "address-confirm" ? renderAddressConfirm() : ""}
@@ -347,47 +381,63 @@ function renderSheets() {
     ${state.upsellOpen ? renderUpsellSheet() : ""}
     ${state.minOrderOpen ? renderMinimumSheet() : ""}
     ${state.addressConfirmOpen ? renderCheckoutAddressConfirm() : ""}
-    ${state.sheet === "checkout" ? renderCheckoutSheet() : ""}
+    ${state.sheet === "checkout" && !state.addressConfirmOpen ? renderCheckoutSheet() : ""}
   `;
 }
 
-function sheet(content, extra = "") {
-  return `<div class="sheet-backdrop ${extra}"><section class="bottom-sheet">${content}</section></div>`;
+function sheet(title, content, options = {}) {
+  const {
+    extra = "",
+    closeLabel = "Close",
+    backLabel = "Go back",
+    critical = false,
+    dismissible = false,
+  } = options;
+  const modalClasses = [extra, critical ? "critical-modal" : "", dismissible ? "dismissible-modal" : ""].filter(Boolean).join(" ");
+  return `
+    <div class="sheet-backdrop ${modalClasses}" data-dismissible="${dismissible && !critical ? "true" : "false"}">
+      <section class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="activeSheetTitle">
+        <header class="sheet-flow-header">
+          <button class="sheet-icon-button" data-action="sheet-back" aria-label="${backLabel}">${icon("back")}</button>
+          <h2 id="activeSheetTitle">${title}</h2>
+          <button class="sheet-icon-button" data-action="sheet-close" aria-label="${closeLabel}">${icon("close")}</button>
+        </header>
+        <div class="sheet-content">${content}</div>
+      </section>
+    </div>
+  `;
 }
 
 function renderCookieSheet() {
-  return sheet(`
-    <h2>We use cookies to improve your ordering experience.</h2>
+  return sheet("Cookies", `
+    <p><strong>We use cookies to improve your ordering experience.</strong></p>
     <p>Cookies store your cart, preferences, and local MVP session.</p>
     <button class="primary-action full" data-cookie-choice="all">Accept all</button>
     <button class="secondary-action full" data-sheet="cookie-settings">Manage settings</button>
     <button class="text-button full" data-cookie-choice="required">Reject optional cookies</button>
-  `, "blocking-modal");
+  `, { extra: "blocking-modal", critical: true, dismissible: false });
 }
 
 function renderCookieSettings() {
   const decision = read("cookieDecision") || { required: true, analytics: false };
-  return sheet(`
-    <h2>Cookie Settings</h2>
+  return sheet("Cookie Settings", `
     <label class="setting-row"><span>Required cookies</span><input type="checkbox" checked disabled /></label>
     <label class="setting-row"><span>Analytics cookies</span><input type="checkbox" ${decision.analytics ? "checked" : ""} data-cookie-analytics /></label>
     <button class="primary-action full" data-action="save-cookie-settings">Save settings</button>
-  `);
+  `, { closeLabel: "Close cookie settings" });
 }
 
 function renderLocationSheet() {
-  return sheet(`
-    <h2>Allow location access?</h2>
+  return sheet("Allow location access?", `
     <p>Location helps check delivery availability and nearest restaurant. You can enter an address manually.</p>
     <button class="primary-action full" data-action="allow-location">Allow location</button>
     <button class="secondary-action full" data-action="manual-address">Enter address manually</button>
-  `);
+  `, { closeLabel: "Close location request" });
 }
 
 function renderStartSheet() {
   const lang = t[state.language] || t.en;
-  return sheet(`
-    <h2>${lang.start}</h2>
+  return sheet(lang.start, `
     <button class="start-button delivery" data-sheet="delivery">${icon("delivery")}<span>${lang.delivery}</span><small>Bring it to my door</small></button>
     <button class="start-button pickup" data-sheet="pickup">${icon("pickup")}<span>${lang.pickup}</span><small>Collect from Giros King</small></button>
     <section class="rewards-mini"><strong>${lang.rewards}</strong><span>Save details and vouchers locally for this MVP.</span></section>
@@ -395,31 +445,39 @@ function renderStartSheet() {
       <button data-sheet="language">${lang.language}</button>
       <button data-sheet="account">${lang.account}</button>
     </div>
-  `);
+  `, { closeLabel: "Close start order", dismissible: true });
 }
 
 function renderDeliveryFlow() {
-  const address = read("deliveryAddress") || "";
-  const quote = quoteDelivery(address, subtotal());
-  return sheet(`
-    <button class="sheet-back" data-sheet="">Back</button>
-    <h2>Delivery</h2>
+  const savedAddress = state.selectedAddress || read("selectedAddress");
+  const address = savedAddress?.formattedAddress || read("deliveryAddress") || "";
+  const quote = savedAddress ? quoteDelivery(savedAddress, subtotal()) : address ? quoteDelivery(address, subtotal()) : null;
+  return sheet("Delivery", `
     <form id="deliveryFlowForm">
-      <label class="field">Address search<input name="address" placeholder="Start typing your address here..." value="${address}" required /></label>
-      <section class="address-section"><span>Current</span>${address ? `<button class="address-card" type="button" data-select-current-address>${address}<small>${quote.message}</small></button>` : `<p>No saved address yet.</p>`}</section>
-      ${address && !quote.available ? `<div class="minimum-alert">${quote.message}</div>` : ""}
+      <label class="field">Address search<input name="address" placeholder="Start typing your address here..." value="${address}" required data-address-input autocomplete="street-address" /></label>
+      <small class="helper-copy address-provider" data-address-provider>${state.mapsStatus}. ${hasGoogleMapsApiKey() ? "Select a Google suggestion for exact delivery pricing." : "Add a postcode for demo delivery pricing."}</small>
+      <section class="address-section"><span>Current</span>${savedAddress ? renderSelectedAddressCard(savedAddress, quote) : address ? `<article class="address-card">${address}<small>${quote?.message || ""}</small></article>` : `<p>No saved address yet.</p>`}</section>
+      ${address && quote && !quote.available ? `<div class="minimum-alert">${quote.message}</div>` : ""}
       <label class="field">Delivery date<select name="date">${[0, 1, 2, 3].map((offset) => `<option value="${todayISO(offset)}">${offset === 0 ? "Today" : offset === 1 ? "Tomorrow" : todayISO(offset)}</option>`).join("")}</select></label>
       <label class="field">Delivery time<select name="time">${pickupSlots().map((slot) => `<option>${slot}</option>`).join("")}</select></label>
       <p class="helper-copy">${settings().online ? "Store is open. You can deliver now." : "Store is currently closed. Choose a later time."}</p>
       <button class="primary-action full" type="submit">${settings().online ? "Deliver now" : "Deliver later"}</button>
     </form>
-  `);
+  `, { closeLabel: "Close delivery" });
+}
+
+function renderSelectedAddressCard(address, quote = quoteDelivery(address, subtotal())) {
+  return `
+    <article class="address-card selected-address-card">
+      <strong>${address.formattedAddress}</strong>
+      <span>${[address.postcode, address.city].filter(Boolean).join(" ") || "Postcode/city not detected"}</span>
+      <small>${quote.message}</small>
+    </article>
+  `;
 }
 
 function renderPickupFlow() {
-  return sheet(`
-    <button class="sheet-back" data-sheet="">Back</button>
-    <h2>Pickup</h2>
+  return sheet("Pickup", `
     <p>${storeAddress}</p>
     <form id="pickupFlowForm">
       <label class="field">Pickup day<select name="date">${[0, 1, 2, 3, 4].map((offset) => `<option value="${todayISO(offset)}">${offset === 0 ? "Today" : offset === 1 ? "Tomorrow" : todayISO(offset)}</option>`).join("")}</select></label>
@@ -427,22 +485,37 @@ function renderPickupFlow() {
       <p class="helper-copy">${settings().online ? "Choose a pickup time." : "Restaurant is closed now. Next available time is shown."}</p>
       <button class="primary-action full" type="submit">Continue to menu</button>
     </form>
-  `);
+  `, { closeLabel: "Close pickup" });
 }
 
 function renderAddressConfirm() {
   const ctx = state.pendingCheckout;
-  return sheet(`
-    <h2>Please confirm your delivery address</h2>
-    <article class="address-card">${ctx.address}<small>${quoteDelivery(ctx.address, subtotal()).message}</small></article>
+  const address = ctx.addressDetails || createManualAddress(ctx.address);
+  const quote = quoteDelivery(address, subtotal());
+  return sheet("Confirm address", `
+    <p>Please confirm your delivery address.</p>
+    <article class="address-card address-confirm-card">
+      <strong>${address.formattedAddress}</strong>
+      <span>${[address.postcode, address.city].filter(Boolean).join(" ")}</span>
+      ${renderMapPreview(address)}
+      <small>${quote.message}</small>
+    </article>
     <button class="secondary-action full" data-sheet="delivery">Edit address</button>
     <button class="primary-action full" data-action="confirm-delivery-start">Confirm address</button>
-  `);
+  `, { closeLabel: "Close address confirmation", critical: true, dismissible: false });
+}
+
+function renderMapPreview(address) {
+  const mapUrl = mapPreviewUrl(address);
+  if (mapUrl) {
+    return `<div class="map-preview"><img src="${mapUrl}" alt="Map preview for ${address.formattedAddress}" /><span class="map-pin" aria-hidden="true"></span></div>`;
+  }
+  return `<div class="map-preview fallback-map"><span class="map-grid"></span><span class="map-pin" aria-hidden="true"></span><small>Map preview fallback</small></div>`;
 }
 
 function renderAccountSheet() {
-  return sheet(`
-    <h2>${state.authMode === "login" ? "Login" : state.authMode === "guest" ? "Guest details" : "Create account"}</h2>
+  const draft = state.accountDraft || {};
+  return sheet(state.authMode === "login" ? "Login" : state.authMode === "guest" ? "Guest details" : "Create account", `
     <div class="auth-tabs">
       <button class="${state.authMode === "guest" ? "active" : ""}" data-auth-mode="guest">Guest</button>
       <button class="${state.authMode === "login" ? "active" : ""}" data-auth-mode="login">Login</button>
@@ -453,21 +526,20 @@ function renderAccountSheet() {
     <button class="google-button" disabled>Continue with Facebook</button>
     <small class="helper-copy">Social login placeholders are disabled until OAuth is configured.</small>
     <form id="accountForm">
-      <label class="field">Name<input name="name" value="${state.user?.name || ""}" />${accountError("name")}</label>
-      <label class="field">Mobile number<input name="phone" value="${state.user?.phone || ""}" />${accountError("phone")}</label>
-      <label class="field">Email<input name="email" type="email" value="${state.user?.email || ""}" />${accountError("email")}</label>
-      ${state.authMode === "signup" ? `<label class="field">Password<input name="password" type="password" />${accountError("password")}</label><label class="terms-line"><input name="terms" type="checkbox" /> I accept terms and privacy</label>${accountError("terms")}<label class="terms-line"><input name="rewards" type="checkbox" /> Join Rewards Club</label>` : ""}
+      <label class="field">Name<input name="name" value="${draft.name || ""}" data-account-field="name" />${accountError("name")}</label>
+      <label class="field">Mobile number<input name="phone" value="${draft.phone || ""}" data-account-field="phone" />${accountError("phone")}</label>
+      <label class="field">Email<input name="email" type="email" value="${draft.email || ""}" data-account-field="email" />${accountError("email")}</label>
+      ${state.authMode === "signup" ? `<label class="field">Password<input name="password" type="password" value="${draft.password || ""}" data-account-field="password" />${accountError("password")}</label><label class="terms-line"><input name="terms" type="checkbox" ${draft.terms ? "checked" : ""} data-account-field="terms" /> I accept terms and privacy</label>${accountError("terms")}<label class="terms-line"><input name="rewards" type="checkbox" ${draft.rewards ? "checked" : ""} data-account-field="rewards" /> Join Rewards Club</label>` : ""}
       <button class="primary-action full" type="submit">${state.authMode === "login" ? "Login" : state.authMode === "guest" ? "Continue as guest" : "Create account"}</button>
     </form>
-  `);
+  `, { closeLabel: "Close account" });
 }
 
 function renderLanguageSheet() {
-  return sheet(`
-    <h2>Language</h2>
+  return sheet("Language", `
     <button class="language-row ${state.language === "en" ? "active" : ""}" data-language="en">English</button>
     <button class="language-row ${state.language === "de" ? "active" : ""}" data-language="de">German</button>
-  `);
+  `, { closeLabel: "Close language selector", dismissible: true });
 }
 
 function productTotal() {
@@ -483,10 +555,8 @@ function productTotal() {
 function renderProductSheet() {
   const product = state.selectedProduct;
   const cfg = state.productConfig;
-  return sheet(`
-    <button class="modal-close" data-action="close-product">Close</button>
+  return sheet(product.name, `
     <img class="detail-image" src="${product.image}" alt="${product.name}" />
-    <h2>${product.name}</h2>
     <strong>${money(product.price)}</strong>
     <p>${product.description}</p>
     <div class="info-row"><span>Allergens: ${product.allergens}</span><span>VAT included</span></div>
@@ -500,7 +570,7 @@ function renderProductSheet() {
     <label class="field">Notes<textarea data-product-notes>${cfg.notes || ""}</textarea></label>
     <div class="quantity-control modal-quantity"><button data-product-qty="-">-</button><b>${cfg.quantity}</b><button data-product-qty="+">+</button></div>
     <button class="sticky-checkout product-add" data-action="add-product">Add to Cart · ${money(productTotal())}</button>
-  `);
+  `, { closeLabel: "Close product details", dismissible: true });
 }
 
 function optionGroup(title, key, values, selected) {
@@ -508,38 +578,43 @@ function optionGroup(title, key, values, selected) {
 }
 
 function renderUpsellSheet() {
-  return sheet(`
-    <h2>Would you like any add ons?</h2>
+  return sheet("Would you like any add ons?", `
     <div class="upsell-grid">${read("upsellProducts").map((item) => `<button class="${state.selectedUpsells.has(item.id) ? "active" : ""}" data-upsell-select="${item.id}"><img src="${item.image}" alt="" /><span>${item.name}</span><strong>${money(item.price)}</strong></button>`).join("")}</div>
     <button class="primary-action full" data-action="add-upsells">Add selected</button>
     <button class="text-button full" data-action="skip-upsells">Skip</button>
-  `);
+  `, { closeLabel: "Close add ons", dismissible: true });
 }
 
 function renderMinimumSheet() {
   const missing = Math.max(0, Number(settings().minimumOrder || 15) - subtotal());
-  return sheet(`
-    <h2>Sorry, your order does not meet the minimum delivery amount of ${money(settings().minimumOrder)}</h2>
+  return sheet("Minimum order", `
+    <p>Sorry, your order does not meet the minimum delivery amount of ${money(settings().minimumOrder)}.</p>
     <p>Add ${money(missing)} more to continue.</p>
     ${renderSuggestedAddons()}
     <button class="primary-action full" data-action="close-minimum">Add more items</button>
-  `);
+  `, { closeLabel: "Close minimum order warning", dismissible: true });
 }
 
 function renderCheckoutAddressConfirm() {
-  return sheet(`
-    <h2>Please confirm your delivery address</h2>
-    <article class="address-card">${state.pendingCheckout.address}<small>${quoteDelivery(state.pendingCheckout.address, subtotal()).message}</small></article>
+  const address = state.pendingCheckout.addressDetails || createManualAddress(state.pendingCheckout.address);
+  const quote = quoteDelivery(address, subtotal());
+  return sheet("Confirm delivery address", `
+    <p>Please confirm your delivery address.</p>
+    <article class="address-card address-confirm-card">
+      <strong>${address.formattedAddress}</strong>
+      <span>${[address.postcode, address.city].filter(Boolean).join(" ")}</span>
+      ${renderMapPreview(address)}
+      <small>${quote.message}</small>
+    </article>
     <button class="secondary-action full" data-action="edit-checkout-address">Edit address</button>
     <button class="primary-action full" data-action="place-confirmed-order">Confirm and place order</button>
-  `);
+  `, { closeLabel: "Close checkout confirmation", critical: true, dismissible: false });
 }
 
 function renderCheckoutSheet() {
   const ctx = context();
   const customer = state.user || {};
-  return sheet(`
-    <h2>Checkout</h2>
+  return sheet("Checkout", `
     <form id="checkoutForm">
       <section class="checkout-section"><h3>Order details</h3><p>${ctx.type === "delivery" ? ctx.address : storeAddress}<br />${ctx.date} at ${ctx.time}</p></section>
       <section class="checkout-section"><h3>My Details</h3>
@@ -550,9 +625,19 @@ function renderCheckoutSheet() {
       <section class="checkout-section"><h3>Instructions</h3><textarea name="notes" placeholder="${ctx.type === "delivery" ? "Doorbell, floor, apartment..." : "Pickup notes..."}"></textarea></section>
       <section class="checkout-section"><h3>Terms and Conditions</h3><label class="terms-line"><input name="terms" type="checkbox" /> I agree to privacy and order terms</label>${checkoutError("terms")}</section>
       <section class="checkout-section"><h3>Payment Method</h3>${paymentMethods.map((method) => `<label class="payment-card ${method === "Cash" ? "active" : "disabled"}"><input type="radio" name="payment" value="${method}" ${method === "Cash" ? "checked" : "disabled"} /> ${method}${method === "Cash" ? "" : " · coming soon"}</label>`).join("")}</section>
+      <section class="checkout-section checkout-totals"><h3>Order summary</h3>${renderCheckoutTotals()}</section>
       <button class="sticky-checkout" type="submit">Place order · ${money(total())}</button>
     </form>
-  `);
+  `, { closeLabel: "Close checkout", critical: true, dismissible: false });
+}
+
+function renderCheckoutTotals() {
+  return `
+    <div><span>Subtotal</span><strong>${money(subtotal())}</strong></div>
+    <div><span>Delivery fee</span><strong>${money(delivery().fee)}</strong></div>
+    <div><span>Discount</span><strong>-${money(discount())}</strong></div>
+    <div class="grand"><span>Total</span><strong>${money(total())}</strong></div>
+  `;
 }
 
 function accountError(name) {
@@ -577,6 +662,161 @@ function showToast(message) {
     const current = app.querySelector(".toast-host");
     if (current) current.innerHTML = "";
   }, 2200);
+}
+
+function afterRender() {
+  if (state.sheet === "delivery") initDeliveryAutocomplete();
+}
+
+async function initDeliveryAutocomplete() {
+  const input = app.querySelector("[data-address-input]");
+  if (!input || input.dataset.autocompleteAttached === "true") return;
+  input.dataset.autocompleteAttached = "true";
+  const autocomplete = await attachPlacesAutocomplete(input, handleAddressSelected);
+  if (!autocomplete && hasGoogleMapsApiKey()) {
+    state.mapsStatus = "Google Places unavailable. Manual fallback active.";
+    const status = app.querySelector("[data-address-provider]");
+    if (status) status.textContent = state.mapsStatus;
+  }
+}
+
+function handleAddressSelected(address) {
+  const quote = quoteDelivery(address, subtotal());
+  const selectedAddress = { ...address, delivery: quote };
+  state.selectedAddress = selectedAddress;
+  write("selectedAddress", selectedAddress);
+  write("deliveryAddress", selectedAddress.formattedAddress);
+  if (!quote.available) showToast(quote.message);
+  render();
+}
+
+function acceptRequiredCookiesAndContinue() {
+  write("cookieDecision", { required: true, analytics: false });
+  state.sheet = read("locationPreference") ? null : "location";
+  state.startDismissed = false;
+}
+
+function closeCurrentOverlay() {
+  if (state.selectedProduct) {
+    state.selectedProduct = null;
+    state.productConfig = null;
+    return render();
+  }
+  if (state.upsellOpen) {
+    state.selectedUpsells.clear();
+    state.upsellOpen = false;
+    state.page = "cart";
+    return render();
+  }
+  if (state.minOrderOpen) {
+    state.minOrderOpen = false;
+    state.page = "cart";
+    return render();
+  }
+  if (state.addressConfirmOpen) {
+    state.addressConfirmOpen = false;
+    state.sheet = "checkout";
+    return render();
+  }
+
+  if (!context() && !state.sheet && !state.startDismissed) {
+    state.startDismissed = true;
+    return render();
+  }
+
+  switch (state.sheet) {
+    case "cookies":
+      acceptRequiredCookiesAndContinue();
+      break;
+    case "cookie-settings":
+      state.sheet = read("cookieDecision") ? null : "cookies";
+      break;
+    case "location":
+      write("locationPreference", { allowed: false, skipped: true });
+      state.sheet = null;
+      state.startDismissed = false;
+      break;
+    case "delivery":
+    case "pickup":
+      state.sheet = null;
+      state.startDismissed = false;
+      break;
+    case "address-confirm":
+      state.sheet = "delivery";
+      break;
+    case "checkout":
+      state.sheet = null;
+      state.page = cart().length ? "cart" : "menu";
+      break;
+    case "account":
+    case "language":
+      state.sheet = null;
+      if (!context()) state.startDismissed = false;
+      break;
+    default:
+      state.sheet = null;
+      break;
+  }
+  render();
+}
+
+function goBack() {
+  if (state.selectedProduct || state.upsellOpen || state.minOrderOpen) return closeCurrentOverlay();
+  if (state.addressConfirmOpen) {
+    state.addressConfirmOpen = false;
+    state.sheet = "checkout";
+    return render();
+  }
+
+  switch (state.sheet) {
+    case "cookie-settings":
+      state.sheet = read("cookieDecision") ? null : "cookies";
+      break;
+    case "location":
+      state.sheet = read("cookieDecision") ? null : "cookies";
+      state.startDismissed = false;
+      break;
+    case "delivery":
+    case "pickup":
+      state.sheet = null;
+      state.startDismissed = false;
+      break;
+    case "address-confirm":
+      state.sheet = "delivery";
+      break;
+    case "checkout":
+      state.sheet = null;
+      state.page = "cart";
+      break;
+    case "account":
+    case "language":
+      state.sheet = null;
+      if (!context()) state.startDismissed = false;
+      break;
+    case "cookies":
+      acceptRequiredCookiesAndContinue();
+      break;
+    default:
+      if (!context() && !state.sheet && !state.startDismissed) {
+        state.startDismissed = true;
+      } else {
+        state.sheet = null;
+      }
+      break;
+  }
+  render();
+}
+
+function closePageToMenu() {
+  state.page = "menu";
+  state.sheet = null;
+  render();
+}
+
+function canEscapeClose() {
+  if (state.addressConfirmOpen) return false;
+  if (["cookies", "delivery", "pickup", "address-confirm", "checkout"].includes(state.sheet)) return false;
+  return hasOpenOverlay();
 }
 
 function openProduct(product) {
@@ -608,6 +848,12 @@ function addUpsell(id) {
 }
 
 function continueToCheckout() {
+  if (!context()) {
+    state.startDismissed = false;
+    state.sheet = null;
+    render();
+    return;
+  }
   if (context()?.type === "delivery" && subtotal() < Number(settings().minimumOrder || 15)) {
     state.minOrderOpen = true;
     render();
@@ -642,6 +888,11 @@ async function placeOrder(details) {
 }
 
 app.addEventListener("click", (event) => {
+  if (event.target.classList.contains("sheet-backdrop")) {
+    if (event.target.dataset.dismissible === "true") closeCurrentOverlay();
+    return;
+  }
+
   const page = event.target.closest("[data-page]")?.dataset.page;
   const sheetName = event.target.closest("[data-sheet]")?.dataset.sheet;
   const action = event.target.closest("[data-action]")?.dataset.action;
@@ -656,6 +907,10 @@ app.addEventListener("click", (event) => {
   const qty = event.target.closest("[data-product-qty]")?.dataset.productQty;
   const dec = event.target.closest("[data-dec]");
   const inc = event.target.closest("[data-inc]");
+
+  if (action === "sheet-close") return closeCurrentOverlay();
+  if (action === "sheet-back") return goBack();
+  if (action === "page-back" || action === "page-close") return closePageToMenu();
 
   if (page) {
     state.page = page;
@@ -754,6 +1009,7 @@ app.addEventListener("click", (event) => {
   if (action === "logout") {
     write("session", null);
     state.user = null;
+    state.accountDraft = {};
     render();
   }
   if (action === "allow-location") requestLocation();
@@ -781,6 +1037,7 @@ app.addEventListener("click", (event) => {
     write("orderContext", null);
     state.orderContext = null;
     state.sheet = null;
+    state.startDismissed = false;
     render();
   }
 });
@@ -795,17 +1052,42 @@ app.addEventListener("input", (event) => {
   }
   if (event.target.matches("[data-voucher-input]")) state.voucherCode = event.target.value;
   if (event.target.matches("[data-product-notes]") && state.productConfig) state.productConfig.notes = event.target.value;
+  if (event.target.matches("[data-address-input]")) {
+    const value = sanitize(event.target.value);
+    if (state.selectedAddress?.formattedAddress !== value) state.selectedAddress = null;
+    write("deliveryAddress", value);
+  }
+  if (event.target.matches("[data-account-field]")) {
+    const field = event.target.dataset.accountField;
+    state.accountDraft = {
+      ...state.accountDraft,
+      [field]: event.target.type === "checkbox" ? event.target.checked : event.target.value,
+    };
+  }
 });
 
 app.addEventListener("submit", (event) => {
   event.preventDefault();
   if (event.target.id === "deliveryFlowForm") {
     const data = new FormData(event.target);
-    const address = sanitize(data.get("address"));
-    const quote = quoteDelivery(address, subtotal());
+    const rawAddress = sanitize(data.get("address"));
+    const selected = state.selectedAddress?.formattedAddress === rawAddress ? state.selectedAddress : createManualAddress(rawAddress);
+    const quote = quoteDelivery(selected, subtotal());
+    const address = selected.formattedAddress;
+    state.selectedAddress = { ...selected, delivery: quote };
+    write("selectedAddress", state.selectedAddress);
     write("deliveryAddress", address);
     if (!quote.available) return showToast(quote.message);
-    state.pendingCheckout = { type: "delivery", address, date: String(data.get("date")), time: String(data.get("time")) };
+    state.pendingCheckout = {
+      type: "delivery",
+      address,
+      addressDetails: selected,
+      deliveryFee: quote.fee,
+      distanceKm: quote.distanceKm,
+      deliveryZone: quote.area,
+      date: String(data.get("date")),
+      time: String(data.get("time")),
+    };
     state.sheet = "address-confirm";
     render();
   }
@@ -823,6 +1105,7 @@ app.addEventListener("submit", (event) => {
     state.accountErrors = errors;
     if (Object.keys(errors).length) return render();
     state.user = saveDemoUser(input, state.authMode);
+    state.accountDraft = state.user;
     state.sheet = null;
     render();
   }
@@ -834,7 +1117,13 @@ app.addEventListener("submit", (event) => {
     state.checkoutErrors = errors;
     if (Object.keys(errors).length) return render();
     state.user = saveDemoUser({ name: data.get("name"), email: data.get("email"), phone: data.get("phone") }, state.user?.type || "guest");
-    state.pendingCheckout = { notes: sanitize(data.get("notes")), payment: data.get("payment") || "Cash", address: context().address };
+    state.accountDraft = state.user;
+    state.pendingCheckout = {
+      notes: sanitize(data.get("notes")),
+      payment: data.get("payment") || "Cash",
+      address: context().address,
+      addressDetails: context().addressDetails,
+    };
     if (context().type === "delivery") {
       state.addressConfirmOpen = true;
       render();
@@ -898,6 +1187,13 @@ app.addEventListener("click", (event) => {
     state.pendingCheckout = null;
     state.sheet = null;
     render();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && canEscapeClose()) {
+    event.preventDefault();
+    closeCurrentOverlay();
   }
 });
 

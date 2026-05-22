@@ -10,6 +10,7 @@ const requiredFiles = [
   "api/orders/[id]/status.js",
   "src/customer/app.js",
   "src/admin/app.js",
+  "src/shared/address-service.js",
   "src/shared/order-service.js",
   "src/shared/auth-service.js",
   "src/server/order-service.mjs",
@@ -37,6 +38,7 @@ await writeFile(
   "config.js",
   `window.GIROS_SUPABASE_URL = ${JSON.stringify(process.env.GIROS_SUPABASE_URL || "")};
 window.GIROS_SUPABASE_ANON_KEY = ${JSON.stringify(process.env.GIROS_SUPABASE_ANON_KEY || "")};
+window.GOOGLE_MAPS_API_KEY = ${JSON.stringify(process.env.GOOGLE_MAPS_API_KEY || "")};
 `,
 );
 
@@ -47,6 +49,7 @@ await run(process.execPath, [
 await run(process.execPath, ["--check", "src/customer/app.js"]);
 await run(process.execPath, ["--check", "src/admin/app.js"]);
 await run(process.execPath, ["--check", "src/shared/store.js"]);
+await run(process.execPath, ["--check", "src/shared/address-service.js"]);
 await run(process.execPath, ["--check", "src/shared/order-service.js"]);
 await run(process.execPath, ["--check", "src/shared/auth-service.js"]);
 await run(process.execPath, ["--check", "src/server/order-service.mjs"]);

@@ -1,7 +1,7 @@
 import { categories, deliveryZones, demoCustomers, demoOrders, offerBanners, products, promotions, settings, upsellProducts } from "./data.js";
 
 const defaults = {
-  schemaVersion: 5,
+  schemaVersion: 6,
   categories,
   products,
   offerBanners,
@@ -19,6 +19,7 @@ const defaults = {
   locationPreference: null,
   fulfillmentChoice: "",
   deliveryAddress: "",
+  selectedAddress: null,
   pickupSchedule: null,
   savedVouchers: [],
   recentSearches: [],
@@ -59,7 +60,9 @@ export function ensureSeedData() {
 }
 
 export function money(value) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value || 0));
+  const currency = read("settings")?.currency || "EUR";
+  const locale = currency === "EUR" ? "de-DE" : "en-US";
+  return new Intl.NumberFormat(locale, { style: "currency", currency }).format(Number(value || 0));
 }
 
 export function uid(prefix = "id") {

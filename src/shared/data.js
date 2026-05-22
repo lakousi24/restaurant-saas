@@ -249,9 +249,9 @@ export const sauces = [
 ];
 
 export const deliveryZones = [
-  { id: "zone-1", name: "Central", area: "0-2 mi", fee: 2.99, eta: "22-30 min" },
-  { id: "zone-2", name: "Midtown", area: "2-5 mi", fee: 4.99, eta: "30-42 min" },
-  { id: "zone-3", name: "Outer ring", area: "5-8 mi", fee: 7.99, eta: "42-55 min" },
+  { id: "zone-1", name: "Central", area: "0-2 km", fee: 2.99, eta: "22-30 min" },
+  { id: "zone-2", name: "Midtown", area: "2-5 km", fee: 4.99, eta: "30-42 min" },
+  { id: "zone-3", name: "Outer ring", area: "5-8 km", fee: 7.99, eta: "42-55 min" },
 ];
 
 export const promotions = [
@@ -317,7 +317,7 @@ export const settings = {
   mapsUrl: "https://maps.google.com",
   email: "orders@girosking.local",
   phone: "(555) 014-2040",
-  currency: "USD",
+  currency: "EUR",
   language: "en",
   timezone: "Europe/Berlin",
   taxRate: 8.25,
@@ -338,6 +338,10 @@ export const settings = {
   freeDeliveryThreshold: 45,
   pickupEnabled: true,
   deliveryEnabled: true,
+  restaurantLocation: {
+    latitude: 52.52,
+    longitude: 13.405,
+  },
   loyalty: { pointsPerDollar: 1, redemptionPoints: 250, rewardValue: 5 },
   hours: [
     ["Mon", "11:00", "22:00"],

@@ -1,2 +1,3 @@
 window.GIROS_SUPABASE_URL = "";
 window.GIROS_SUPABASE_ANON_KEY = "";
+window.GOOGLE_MAPS_API_KEY = "";

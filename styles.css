@@ -1426,6 +1426,10 @@ p {
   padding-bottom: 84px;
 }
 
+.customer-body.modal-open {
+  overflow: hidden;
+}
+
 .customer-body .dominos-inspired button,
 .customer-body .dominos-inspired input,
 .customer-body .dominos-inspired select,
@@ -1927,10 +1931,17 @@ p {
   justify-content: space-between;
 }
 
-.totals-card .grand {
+.totals-card .grand,
+.checkout-totals .grand {
   border-top: 1px solid var(--border);
   font-size: 1.18rem;
   padding-top: 8px;
+}
+
+.checkout-totals div {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
 }
 
 .sticky-checkout {
@@ -2414,6 +2425,9 @@ p {
   animation: sheetRise 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   border: 1px solid rgba(255, 255, 255, 0.84);
   box-shadow: 0 -28px 80px rgba(11, 42, 74, 0.22);
+  overscroll-behavior: contain;
+  padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  width: 100%;
 }
 
 .bottom-sheet::before {
@@ -2424,6 +2438,79 @@ p {
   justify-self: center;
   margin-top: -6px;
   width: 48px;
+}
+
+.sheet-flow-header,
+.screen-flow-header {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+}
+
+.sheet-flow-header {
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: 22px;
+  margin: -2px -2px 0;
+  padding: 4px;
+  position: sticky;
+  top: 0;
+  z-index: 6;
+}
+
+.screen-flow-header {
+  margin-bottom: -4px;
+}
+
+.sheet-flow-header h2,
+.screen-flow-header h1 {
+  color: var(--primary-dark);
+  font-size: 1.15rem;
+  font-weight: 950;
+  letter-spacing: -0.02em;
+  margin: 0;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-icon-button {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid rgba(220, 231, 243, 0.96);
+  border-radius: 999px;
+  box-shadow: 0 8px 22px rgba(16, 24, 40, 0.11);
+  color: var(--primary-dark);
+  display: inline-flex;
+  height: 44px;
+  justify-content: center;
+  justify-self: center;
+  padding: 0;
+  transition: background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  width: 44px;
+}
+
+.sheet-icon-button:hover {
+  background: var(--primary-soft);
+}
+
+.sheet-icon-button:active {
+  box-shadow: 0 5px 14px rgba(16, 24, 40, 0.12);
+  transform: scale(0.96);
+}
+
+.sheet-icon-button .nav-icon {
+  background: transparent;
+  color: inherit;
+  height: 20px;
+  padding: 0;
+  width: 20px;
+}
+
+.sheet-content {
+  display: grid;
+  gap: 14px;
 }
 
 .start-button {
@@ -2481,6 +2568,82 @@ p {
 .address-card {
   background: linear-gradient(135deg, #f0f7ff, #ffffff);
   color: var(--primary-dark);
+}
+
+.address-provider {
+  background: rgba(22, 119, 255, 0.08);
+  border: 1px solid rgba(22, 119, 255, 0.14);
+  border-radius: 14px;
+  color: var(--primary-dark);
+  display: block;
+  padding: 10px 12px;
+}
+
+.selected-address-card,
+.address-confirm-card {
+  border-color: rgba(22, 119, 255, 0.22);
+}
+
+.selected-address-card span,
+.address-confirm-card span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.map-preview {
+  aspect-ratio: 16 / 7;
+  background:
+    linear-gradient(90deg, rgba(22, 119, 255, 0.12) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(22, 119, 255, 0.12) 1px, transparent 1px),
+    linear-gradient(135deg, #eaf3ff, #ffffff);
+  background-size: 28px 28px, 28px 28px, 100% 100%;
+  border: 1px solid rgba(22, 119, 255, 0.16);
+  border-radius: 18px;
+  overflow: hidden;
+  position: relative;
+}
+
+.map-preview img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.map-pin {
+  background: var(--promo);
+  border: 3px solid white;
+  border-radius: 999px 999px 999px 0;
+  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.22);
+  height: 24px;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -70%) rotate(-45deg);
+  width: 24px;
+}
+
+.map-pin::after {
+  background: white;
+  border-radius: 999px;
+  content: "";
+  height: 7px;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 7px;
+}
+
+.fallback-map small {
+  background: rgba(255, 255, 255, 0.86);
+  border-radius: 999px;
+  bottom: 10px;
+  color: var(--primary-dark);
+  font-weight: 900;
+  left: 10px;
+  padding: 6px 10px;
+  position: absolute;
 }
 
 .voucher-box {

@@ -28,6 +28,14 @@ function sendJson(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
+function sendConfig(response) {
+  response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" });
+  response.end(`window.GIROS_SUPABASE_URL = ${JSON.stringify(process.env.GIROS_SUPABASE_URL || "")};
+window.GIROS_SUPABASE_ANON_KEY = ${JSON.stringify(process.env.GIROS_SUPABASE_ANON_KEY || "")};
+window.GOOGLE_MAPS_API_KEY = ${JSON.stringify(process.env.GOOGLE_MAPS_API_KEY || "")};
+`);
+}
+
 async function handleApi(request, response, url) {
   if (rateLimited(request.socket.remoteAddress || "local")) {
     sendJson(response, 429, { ok: false, error: "Too many requests" });
@@ -54,6 +62,10 @@ createServer(async (request, response) => {
   try {
     const url = new URL(request.url || "/", `http://${request.headers.host}`);
     if (url.pathname.startsWith("/api/") && (await handleApi(request, response, url))) return;
+    if (url.pathname === "/config.js") {
+      sendConfig(response);
+      return;
+    }
 
     const cleanPath = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, "");
     const routePath = cleanPath === "/admin" || cleanPath === "/admin/" ? "admin.html" : cleanPath === "/" ? "index.html" : cleanPath;
